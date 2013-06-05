@@ -97,8 +97,6 @@ To relocate all buckets in a given project, you could do the following:
 EOF
 }
 
-set -e
-
 buckets=()
 tempbuckets=()
 stage=-1
@@ -153,14 +151,12 @@ function LogStepEnd() {
 }
 
 function BucketExists() {
-  set +e
   $gsutil getversioning $1 &>> $debugout
   if [ $? -eq 0 ]; then
     echo true
   else
     echo false
   fi
-  set -e
 }
 
 
@@ -269,16 +265,18 @@ fi
 # 2) Check if gsutil is configured correctly. Get the first bucket from a
 #    gsutil ls. We can safely assume there is at least one bucket otherwise
 #    we wouldn't be running this script.
-set +e
 test_bucket=`$gsutil ls | head -1`
 if [ "$test_bucket" == '' ]; then
   EchoErr "gsutil does not seem to be configured. Please run gsutil config."
   exit 1
 fi
-set -e
 
 # 3) Checking gsutil version
 gsutil_version=`$gsutil version`
+if [ $? -ne 0 ]; then
+  EchoErr "Failed to get version information for gsutil."
+  exit 1
+fi
 major=${gsutil_version:15:1}
 minor=${gsutil_version:17:2}
 if [ $major -lt 3 ] || ( [ $major -eq 3 ] && [ $minor -lt 30 ] ); then
@@ -309,7 +307,6 @@ function Stage1 {
     if [ `LastStep "$src"` -eq 1 ]; then
       if $extra_verification ; then
         LogStepStart "Step 2: ($src) - checking object permissions. This may take a while..."
-        set +e
         $gsutil ls -L $src/** &>> $debugout
         if [ $? -ne 0 ]; then
           EchoErr "Validation failed: Access denied reading an object from $src."
@@ -327,7 +324,6 @@ function Stage1 {
     if [ `LastStep "$src"` -eq 2 ]; then
       LogStepStart "Step 3: ($src) - checking write permissions."
       random_name="relocate_check_`tr -dc "[:alpha:]" < /dev/urandom | head -c 60`"
-      set +e
       echo 'relocate access check' | gsutil cp - $src/$random_name &>> $debugout
       if [ $? -ne 0 ]; then
         EchoErr "Validation check failed: Access denied writing to $src."
@@ -335,7 +331,6 @@ function Stage1 {
       fi
 
       # Remove the temporary file.
-      set +e
       gsutil rm $src/$random_name &>> $debugout
       if [ $? -ne 0 ]; then
         EchoErr "Validation failed: Could not delete temporary object: $src/$random_name"
@@ -361,15 +356,22 @@ function Stage1 {
         exit 1
       else
         $gsutil mb -l $location -c $class $dst
+        if [ $? -ne 0 ]; then
+          EchoErr "Failed to create the bucket: $dst"
+          exit 1
+        fi
       fi
       LogStepEnd "4,$src"
     fi
 
-    set -e
     # STEP 5: Copy the objects from the source bucket to the temp bucket
     if [ `LastStep "$src"` -eq 4 ]; then
       LogStepStart "Step 5: ($src) - copying objects from source to temporary bucket ($dst)."
       $gsutil -m cp -R -p -L $manifest -D $src/* $dst/
+      if [ $? -ne 0 ]; then
+        EchoErr "Failed to copy objects from $src to $dst."
+        exit 1
+      fi
       LogStepEnd "5,$src"
     fi
 
@@ -379,10 +381,30 @@ function Stage1 {
       short_name=${src:5}
       LogStepStart "Step 6: ($src) - backing up the bucket metadata."
       $gsutil getdefacl $src > /tmp/bucket-relocate-defacl-for-$short_name
+      if [ $? -ne 0 ]; then
+        EchoErr "Failed to backup the default ACL configuration for $src"
+        exit 1
+      fi
       $gsutil getwebcfg $src > /tmp/bucket-relocate-webcfg-for-$short_name
+      if [ $? -ne 0 ]; then
+        EchoErr "Failed to backup the web configuration for $src"
+        exit 1
+      fi
       $gsutil getlogging $src > /tmp/bucket-relocate-logging-for-$short_name
+      if [ $? -ne 0 ]; then
+        EchoErr "Failed to backup the logging configuration for $src"
+        exit 1
+      fi
       $gsutil getcors $src > /tmp/bucket-relocate-cors-for-$short_name
+      if [ $? -ne 0 ]; then
+        EchoErr "Failed to backup the CORS configuration for $src"
+        exit 1
+      fi
       $gsutil getversioning $src > /tmp/bucket-relocate-vers-for-$short_name
+      if [ $? -ne 0 ]; then
+        EchoErr "Failed to backup the versioning configuration for $src"
+        exit 1
+      fi
       LogStepEnd "6,$src"
     fi
   done
@@ -416,6 +438,10 @@ function Stage2 {
     if [ `LastStep "$src"` -eq 6 ]; then
       LogStepStart "Step 7: ($src) - catching up any new objects that weren't copied."
       $gsutil -m cp -R -p -L $manifest -D $src/* $dst/
+      if [ $? -ne 0 ]; then
+        EchoErr "Failed to copy any new objects from $src to $dst"
+        exit 1
+      fi
       LogStepEnd "7,$src"
     fi
 
@@ -423,18 +449,30 @@ function Stage2 {
     if [ `LastStep "$src"` -eq 7 ]; then
       LogStepStart "Step 8: ($src) - removing objects in source bucket."
       $gsutil -m rm -Ra $src/*
+      if [ $? -ne 0 ]; then
+        EchoErr "Failed to remove the objects in $src"
+        exit 1
+      fi
       LogStepEnd "8,$src"
     fi
 
     if [ `LastStep "$src"` -eq 8 ]; then
       LogStepStart "Step 9: ($src) - removing source bucket."
       $gsutil rb $src
+      if [ $? -ne 0 ]; then
+        EchoErr "Failed to remove the bucket: $src"
+        exit 1
+      fi
       LogStepEnd "9,$src"
     fi
 
     if [ `LastStep "$src"` -eq 9 ]; then
       LogStepStart "Step 10: ($src) - recreating original bucket."
       $gsutil mb -l $location -c $class $src
+      if [ $? -ne 0 ]; then
+        EchoErr "Failed to recreate the bucket: $src"
+        exit 1
+      fi
       LogStepEnd "10,$src"
     fi
 
@@ -444,6 +482,10 @@ function Stage2 {
 
       # defacl
       $gsutil setdefacl /tmp/bucket-relocate-defacl-for-$short_name $src
+      if [ $? -ne 0 ]; then
+        EchoErr "Failed to set the default ACL configuration on $src"
+        exit 1
+      fi
 
       # webcfg
       page_suffix=`cat /tmp/bucket-relocate-webcfg-for-$short_name |\
@@ -455,6 +497,10 @@ function Stage2 {
           sed -e 's/<NotFoundPage>//g' -e 's/<\/NotFoundPage>//g'`
       if [ "$error_page" != '' ]; then error_page="-e $error_page"; fi
       $gsutil setwebcfg $page_suffix $error_page $src
+      if [ $? -ne 0 ]; then
+        EchoErr "Failed to set the website configuration on $src"
+        exit 1
+      fi
 
       # logging
       log_bucket=`cat /tmp/bucket-relocate-webcfg-for-$short_name |\
@@ -467,10 +513,18 @@ function Stage2 {
       if [ "$log_prefix" != '' ]; then log_prefix="-o $log_prefix"; fi
       if [ "$log_prefix" != '' ] && [ "$log_bucket" != '' ]; then
         $gsutil enablelogging $log_bucket $log_prefix $src
+        if [ $? -ne 0 ]; then
+          EchoErr "Failed to set the logging configuration on $src"
+          exit 1
+        fi
       fi
 
       # cors
       $gsutil setcors /tmp/bucket-relocate-cors-for-$short_name $src
+      if [ $? -ne 0 ]; then
+        EchoErr "Failed to set the CORS configuration on $src"
+        exit 1
+      fi
 
       # versioning
       versioning=`cat /tmp/bucket-relocate-vers-for-$short_name | head -1`
@@ -478,6 +532,10 @@ function Stage2 {
       versioning=${versioning:vpos}
       if [ "$versioning" == 'Enabled' ]; then
         $gsutil setversioning on $src
+        if [ $? -ne 0 ]; then
+          EchoErr "Failed to set the versioning configuration on $src"
+          exit 1
+        fi
       fi
 
       LogStepEnd "11,$src"
@@ -486,18 +544,30 @@ function Stage2 {
     if [ `LastStep "$src"` -eq 11 ]; then
       LogStepStart "Step 12: ($src) - copying all objects back to original bucket."
       $gsutil -m cp -Rp $dst/* $src/
+      if [ $? -ne 0 ]; then
+        EchoErr "Failed to copy the objects back to the original bucket: $src"
+        exit 1
+      fi
       LogStepEnd "12,$src"
     fi
 
     if [ `LastStep "$src"` -eq 12 ]; then
       LogStepStart "Step 13: ($src) - delete the objects in the temporary bucket ($dst)."
       $gsutil -m rm -R $dst/*
+      if [ $? -ne 0 ]; then
+        EchoErr "Failed to delete the objects from the temporary bucket:  $dst"
+        exit 1
+      fi
       LogStepEnd "13,$src"
     fi
 
     if [ `LastStep "$src"` -eq 13 ]; then
       LogStepStart "Step 14: ($src) - delete the temporary bucket ($dst)."
       $gsutil rb $dst
+      if [ $? -ne 0 ]; then
+        EchoErr "Failed to delete the temporary bucket:  $dst"
+        exit 1
+      fi
       LogStepEnd "14,$src"
     fi
 
