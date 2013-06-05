@@ -572,6 +572,9 @@ function Stage2 {
     fi
 
     if [ `LastStep "$src"` -eq 14 ]; then
+      mv $manifest $manifest.DONE
+      mv $steplog $steplog.DONE
+      mv $debugout $debugout.DONE
       LogStepStart "($src): Completed."
     fi
 
