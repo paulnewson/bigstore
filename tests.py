@@ -148,5 +148,21 @@ class BucketRelocateTests(unittest.TestCase):
     cfg_after = self._GSUtil("getversioning %s" % bucket)
     self.assertEqual(cfg_before, cfg_after)
 
+  def test_VersionedObjects(self):
+    bucket = self.buckets[0]
+    obj1 = '/tjp.dat'
+    obj2 = '/yjux.dat'
+    # enable versioning
+    self._GSUtil('setversioning on %s' % bucket)
+    # force another version
+    self._GSUtil('cp %s%s %s%s' % (bucket, obj1, bucket, obj2))
+    versions_before = self._GSUtil('ls -a %s%s' % (bucket, obj2))
+    self._Relocate(stage='-A', buckets=[bucket])
+    versions_after = self._GSUtil('ls -a %s%s' % (bucket, obj2))
+    version_count = len(versions_before.splitlines())
+    self.assertEqual(version_count, 2)
+    self.assertEqual(version_count, len(versions_after.splitlines()))
+
+
 if __name__ == "__main__":
   unittest.main()

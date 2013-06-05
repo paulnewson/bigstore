@@ -292,9 +292,9 @@ function Stage1 {
     bucket=${buckets[$i]}
     src=$bucket
 
-    # STEP 1: Verify that the source bucket exists.
+    # Verify that the source bucket exists.
     if [ `LastStep "$src"` -eq 0 ]; then
-      LogStepStart "Step 1: ($src) - verify the bucket exists."
+      LogStepStart "Step 1: ($src) - Verify the bucket exists."
       exists=`BucketExists $src`
       if ! $exists; then
         EchoErr "Validation check failed: The specified bucket does not exist: $bucket"
@@ -303,10 +303,10 @@ function Stage1 {
       LogStepEnd "1,$src"
     fi
 
-    # STEP 2: Verify that we can read all the objects.
+    # Verify that we can read all the objects.
     if [ `LastStep "$src"` -eq 1 ]; then
       if $extra_verification ; then
-        LogStepStart "Step 2: ($src) - checking object permissions. This may take a while..."
+        LogStepStart "Step 2: ($src) - Check object permissions. This may take a while..."
         $gsutil ls -L $src/** &>> $debugout
         if [ $? -ne 0 ]; then
           EchoErr "Validation failed: Access denied reading an object from $src."
@@ -320,9 +320,9 @@ function Stage1 {
       fi
     fi
 
-    # STEP 3: Verify WRITE access to the bucket.
+    # Verify WRITE access to the bucket.
     if [ `LastStep "$src"` -eq 2 ]; then
-      LogStepStart "Step 3: ($src) - checking write permissions."
+      LogStepStart "Step 3: ($src) - Checking write permissions."
       random_name="relocate_check_`tr -dc "[:alpha:]" < /dev/urandom | head -c 60`"
       echo 'relocate access check' | gsutil cp - $src/$random_name &>> $debugout
       if [ $? -ne 0 ]; then
@@ -346,10 +346,10 @@ function Stage1 {
     src=${buckets[$i]}
     dst=${tempbuckets[$i]}
 
-    # STEP 4: verify that the bucket does not yet exist and create it in the
+    # verify that the bucket does not yet exist and create it in the
     # correct location with the correct storage class
     if [ `LastStep "$src"` -eq 3 ]; then
-      LogStepStart "Step 4: ($src) - creating temporary bucket ($dst)."
+      LogStepStart "Step 4: ($src) - Create a temporary bucket ($dst)."
       dst_exists=`BucketExists $dst`
       if $dst_exists; then
         EchoErr "The bucket $dst already exists."
@@ -364,22 +364,33 @@ function Stage1 {
       LogStepEnd "4,$src"
     fi
 
-    # STEP 5: Copy the objects from the source bucket to the temp bucket
     if [ `LastStep "$src"` -eq 4 ]; then
-      LogStepStart "Step 5: ($src) - copying objects from source to temporary bucket ($dst)."
-      $gsutil -m cp -R -p -L $manifest -D $src/* $dst/
+      LogStepStart "Step 5: ($src) - Turn on versioning on the temporary bucket."
+      # We need to turn this on in case we are copying versioned objects.
+      $gsutil setversioning on $dst
       if [ $? -ne 0 ]; then
-        EchoErr "Failed to copy objects from $src to $dst."
+        EchoErr "Failed to turn on versioning on the temporary bucket: $dst"
         exit 1
       fi
       LogStepEnd "5,$src"
     fi
 
-
-    # STEP 6: Backup the metadata for the bucket
+    # Copy the objects from the source bucket to the temp bucket
     if [ `LastStep "$src"` -eq 5 ]; then
+      LogStepStart "Step 6: ($src) - Copy objects from source to the temporary bucket ($dst)."
+      $gsutil -m cp -R -p -L $manifest -D $src/* $dst/
+      if [ $? -ne 0 ]; then
+        EchoErr "Failed to copy objects from $src to $dst."
+        exit 1
+      fi
+      LogStepEnd "6,$src"
+    fi
+
+
+    # Backup the metadata for the bucket
+    if [ `LastStep "$src"` -eq 6 ]; then
       short_name=${src:5}
-      LogStepStart "Step 6: ($src) - backing up the bucket metadata."
+      LogStepStart "Step 7: ($src) - Backup the bucket metadata."
       $gsutil getdefacl $src > /tmp/bucket-relocate-defacl-for-$short_name
       if [ $? -ne 0 ]; then
         EchoErr "Failed to backup the default ACL configuration for $src"
@@ -405,7 +416,7 @@ function Stage1 {
         EchoErr "Failed to backup the versioning configuration for $src"
         exit 1
       fi
-      LogStepEnd "6,$src"
+      LogStepEnd "7,$src"
     fi
   done
 
@@ -423,7 +434,7 @@ function Stage2 {
     src=${buckets[$i]}
     dst=${tempbuckets[$i]}
 
-    if [ `LastStep "$src"` -lt 6 ]; then
+    if [ `LastStep "$src"` -lt 7 ]; then
       EchoErr "Relocation for bucket $src did not complete stage 1. Please rerun stage 1 for this bucket."
       exit 1
     fi
@@ -435,51 +446,50 @@ function Stage2 {
     dst=${tempbuckets[$i]}
 
     # Catch up with any new files.
-    if [ `LastStep "$src"` -eq 6 ]; then
-      LogStepStart "Step 7: ($src) - catching up any new objects that weren't copied."
+    if [ `LastStep "$src"` -eq 7 ]; then
+      LogStepStart "Step 8: ($src) - Catch up any new objects that weren't copied."
       $gsutil -m cp -R -p -L $manifest -D $src/* $dst/
       if [ $? -ne 0 ]; then
         EchoErr "Failed to copy any new objects from $src to $dst"
         exit 1
       fi
-      LogStepEnd "7,$src"
-    fi
-
-    # Remove the old src bucket
-    if [ `LastStep "$src"` -eq 7 ]; then
-      LogStepStart "Step 8: ($src) - removing objects in source bucket."
-      $gsutil -m rm -Ra $src/*
-      if [ $? -ne 0 ]; then
-        EchoErr "Failed to remove the objects in $src"
-        exit 1
-      fi
       LogStepEnd "8,$src"
     fi
 
+    # Remove the old src bucket
     if [ `LastStep "$src"` -eq 8 ]; then
-      LogStepStart "Step 9: ($src) - removing source bucket."
-      #TODO: add a retry here if the error is: BucketNotEmpty
-      $gsutil rb $src
+      LogStepStart "Step 9: ($src) - Remove objects in source bucket."
+      $gsutil -m rm -Ra $src/*
       if [ $? -ne 0 ]; then
-        EchoErr "Failed to remove the bucket: $src"
+        EchoErr "Failed to remove the objects in $src"
         exit 1
       fi
       LogStepEnd "9,$src"
     fi
 
     if [ `LastStep "$src"` -eq 9 ]; then
-      LogStepStart "Step 10: ($src) - recreating original bucket."
-      $gsutil mb -l $location -c $class $src
+      LogStepStart "Step 10: ($src) - Remove the source bucket."
+      $gsutil rb $src
       if [ $? -ne 0 ]; then
-        EchoErr "Failed to recreate the bucket: $src"
+        EchoErr "Failed to remove the bucket: $src"
         exit 1
       fi
       LogStepEnd "10,$src"
     fi
 
     if [ `LastStep "$src"` -eq 10 ]; then
+      LogStepStart "Step 11: ($src) - Recreate the original bucket."
+      $gsutil mb -l $location -c $class $src
+      if [ $? -ne 0 ]; then
+        EchoErr "Failed to recreate the bucket: $src"
+        exit 1
+      fi
+      LogStepEnd "11,$src"
+    fi
+
+    if [ `LastStep "$src"` -eq 11 ]; then
       short_name=${src:5}
-      LogStepStart "Step 11: ($src) - restoring the bucket metadata."
+      LogStepStart "Step 12: ($src) - Restore the bucket metadata."
 
       # defacl
       $gsutil setdefacl /tmp/bucket-relocate-defacl-for-$short_name $src
@@ -539,43 +549,42 @@ function Stage2 {
         fi
       fi
 
-      LogStepEnd "11,$src"
-    fi
-
-    if [ `LastStep "$src"` -eq 11 ]; then
-      LogStepStart "Step 12: ($src) - copying all objects back to original bucket."
-      $gsutil -m cp -Rp $dst/* $src/
-      if [ $? -ne 0 ]; then
-        EchoErr "Failed to copy the objects back to the original bucket: $src"
-        exit 1
-      fi
       LogStepEnd "12,$src"
     fi
 
     if [ `LastStep "$src"` -eq 12 ]; then
-      LogStepStart "Step 13: ($src) - delete the objects in the temporary bucket ($dst)."
-      $gsutil -m rm -R $dst/*
+      LogStepStart "Step 13: ($src) - Copy all objects back to the original bucket."
+      $gsutil -m cp -Rp $dst/* $src/
       if [ $? -ne 0 ]; then
-        EchoErr "Failed to delete the objects from the temporary bucket:  $dst"
+        EchoErr "Failed to copy the objects back to the original bucket: $src"
         exit 1
       fi
       LogStepEnd "13,$src"
     fi
 
     if [ `LastStep "$src"` -eq 13 ]; then
-      # Pause for a while so that the deletes can catch up.
-      sleep 5s
-      LogStepStart "Step 14: ($src) - delete the temporary bucket ($dst)."
-      #TODO: Add a retry here if the error is BucketNotEmpty
-      $gsutil rb $dst
+      LogStepStart "Step 14: ($src) - Delete the objects in the temporary bucket ($dst)."
+      $gsutil -m rm -Ra $dst/*
       if [ $? -ne 0 ]; then
-        EchoErr "Failed to delete the temporary bucket:  $dst"
+        EchoErr "Failed to delete the objects from the temporary bucket:  $dst"
         exit 1
       fi
       LogStepEnd "14,$src"
     fi
 
     if [ `LastStep "$src"` -eq 14 ]; then
+      # Pauses for a while so that the deletes can catch up.
+      sleep 5s
+      LogStepStart "Step 15: ($src) - Delete the temporary bucket ($dst)."
+      $gsutil rb $dst
+      if [ $? -ne 0 ]; then
+        EchoErr "Failed to delete the temporary bucket:  $dst"
+        exit 1
+      fi
+      LogStepEnd "15,$src"
+    fi
+
+    if [ `LastStep "$src"` -eq 15 ]; then
       mv $manifest $manifest.DONE
       mv $steplog $steplog.DONE
       mv $debugout $debugout.DONE
