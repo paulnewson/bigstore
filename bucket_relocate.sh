@@ -503,11 +503,11 @@ function Stage2 {
       fi
 
       # logging
-      log_bucket=`cat /tmp/bucket-relocate-webcfg-for-$short_name |\
+      log_bucket=`cat /tmp/bucket-relocate-logging-for-$short_name |\
           grep -o "<LogBucket>.*</LogBucket>" |\
           sed -e 's/<LogBucket>//g' -e 's/<\/LogBucket>//g'`
       if [ "$log_bucket" != '' ]; then log_bucket="-b $log_bucket"; fi
-      log_prefix=`cat /tmp/bucket-relocate-webcfg-for-$short_name |\
+      log_prefix=`cat /tmp/bucket-relocate-logging-for-$short_name |\
           grep -o "<LogObjectPrefix>.*</LogObjectPrefix>" |\
           sed -e 's/<LogObjectPrefix>//g' -e 's/<\/LogObjectPrefix>//g'`
       if [ "$log_prefix" != '' ]; then log_prefix="-o $log_prefix"; fi
@@ -562,6 +562,8 @@ function Stage2 {
     fi
 
     if [ `LastStep "$src"` -eq 13 ]; then
+      # Pause for a while so that the deletes can catch up.
+      sleep 5s
       LogStepStart "Step 14: ($src) - delete the temporary bucket ($dst)."
       $gsutil rb $dst
       if [ $? -ne 0 ]; then
