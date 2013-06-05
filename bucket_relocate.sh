@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright 2010 Google Inc. All Rights Reserved.
+# Copyright 2013 Google Inc. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -105,7 +105,7 @@ stage=-1
 location=''
 class=''
 manifest=/tmp/bucket-relocate-manifest.log
-steplog=/tmp/bucket-relocate-action.log
+steplog=/tmp/bucket-relocate-step.log
 debugout=/tmp/bucket-relocate-debug.log
 extra_verification=false
 
@@ -196,7 +196,7 @@ while getopts ":?12Ac:l:v" opt; do
         EchoErr "Only a single class can be set."
         exit 1
       fi
-      class=$OPTARG/
+      class=$OPTARG
       ;;
     l)
       # Sets the location of the bucket. For example: US or EU
