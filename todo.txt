@@ -3,12 +3,17 @@
 - DONE. bash "set -e" doesn't work; do explicit response code checks (RH working on this)
 
 - DONE. If you attempt to relocate a bucket that you already relocated once, it
-finds the existing step log and concludes it's done, even if some params
-changed. For example I relocated my bucket to a different location, and
-then went to run it again to update to a different storage class, and
-it ran through both stages doing nothing. After sucessfully completing
-stage 2 we should rename the step log to <whatever>.COMPLETE so it's
-still around to be examined but won't intefere with future run attempts.
+  finds the existing step log and concludes it's done, even if some params
+  changed. For example I relocated my bucket to a different location, and
+  then went to run it again to update to a different storage class, and
+  it ran through both stages doing nothing. After sucessfully completing
+  stage 2 we should rename the step log to <whatever>.COMPLETE so it's
+  still around to be examined but won't intefere with future run attempts.
 
-- Add some test cases that will automatically test all the different configurations
-  and scenarios so that we don't regress when we make changes.
+- DONE. Add some test cases that will automatically test all the different
+  configurations and scenarios so that we don't regress when we make changes.
+
+- Add some retries to the bucket deletions. Sometimes when we delete a large
+  number of objects, gsutil seems to return before all the objects have been
+  deleted in the backend. If we do a remove bucket call immediately the
+  call may fail because the bucket is not seen to be empty.
