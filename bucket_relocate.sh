@@ -458,6 +458,7 @@ function Stage2 {
 
     if [ `LastStep "$src"` -eq 8 ]; then
       LogStepStart "Step 9: ($src) - removing source bucket."
+      #TODO: add a retry here if the error is: BucketNotEmpty
       $gsutil rb $src
       if [ $? -ne 0 ]; then
         EchoErr "Failed to remove the bucket: $src"
@@ -506,7 +507,7 @@ function Stage2 {
       log_bucket=`cat /tmp/bucket-relocate-logging-for-$short_name |\
           grep -o "<LogBucket>.*</LogBucket>" |\
           sed -e 's/<LogBucket>//g' -e 's/<\/LogBucket>//g'`
-      if [ "$log_bucket" != '' ]; then log_bucket="-b $log_bucket"; fi
+      if [ "$log_bucket" != '' ]; then log_bucket="-b gs://$log_bucket"; fi
       log_prefix=`cat /tmp/bucket-relocate-logging-for-$short_name |\
           grep -o "<LogObjectPrefix>.*</LogObjectPrefix>" |\
           sed -e 's/<LogObjectPrefix>//g' -e 's/<\/LogObjectPrefix>//g'`
@@ -565,6 +566,7 @@ function Stage2 {
       # Pause for a while so that the deletes can catch up.
       sleep 5s
       LogStepStart "Step 14: ($src) - delete the temporary bucket ($dst)."
+      #TODO: Add a retry here if the error is BucketNotEmpty
       $gsutil rb $dst
       if [ $? -ne 0 ]; then
         EchoErr "Failed to delete the temporary bucket:  $dst"
