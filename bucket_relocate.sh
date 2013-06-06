@@ -30,13 +30,21 @@ fast your network connection is); stage 2 should run quickly, unless a large
 amount of data was added to the bucket while stage 1 was running. You should
 ensure that no reads or writes occur to your bucket during the brief period
 while stage 2 runs.
+To ensure that all data is correctly copied from the source to the temporary
+bucket, we recommend running stage 1 first, and then comparing the source and
+temporary buckets executing:
+
+  gsutil ls -L gs://yourbucket > ls.1
+  gsutil ls -L gs://yourbucket-relocate > ls.2
+  # Use some program that visually highlights diffs:
+  vimdiff ls.1 ls.2
 
 Starting conditions:
-You must have at least version 4.0 of bash and version 3.30 of gsutil installed,
-with credentials (in your .boto config file) that have FULL_CONTROL access to
-all buckets and objects being migrated. If this script is run using credentials
-that lack these permissions it will fail part-way through, at which point you
-will need to change the ACLs of the affected objects and re-run the script.
+You must have at least version 3.30 of gsutil installed, with credentials (in
+your .boto config file) that have FULL_CONTROL access to all buckets and objects
+being migrated. If this script is run using credentials that lack these
+permissions it will fail part-way through, at which point you will need to
+change the ACLs of the affected objects and re-run the script.
 You can do so using a command like:
   gsutil chacl -u scriptuser@gmail.com:FC gs://bucket/object
 If you specify the -v option the script will check all permissions before
@@ -52,7 +60,7 @@ Caveats:
    in stage 1, that object will not be deleted during stage 2.
 2) If an object is overwritten after it has been processed in stage 1, that
    change will not be re-copied during stage 2.
-3) Object change notification configuration isn't preserved by this migration
+3) Object change notification configuration is not preserved by this migration
    script.
 4) Restored objects in versioned buckets will preserve the version ordering but
    not version numbers. For example, if the original bucket contained:
@@ -61,6 +69,11 @@ Caveats:
      gs://bucket/obj#1360448460830000 and gs://bucket/obj#1370448460830000
    Beware of this caveat if you have code that stores the version-ful name
    of objects (e.g., in a database).
+5) Buckets with names longer than 55 characters can not be migrated.
+   This is because the resulting temporary bucket name will be too long (>63
+   characters).
+6) Since this script stores state in /tmp, please do not restart the machine
+   during this process.
 
 If your application overwrites or deletes objects, we recommend disabling all
 writes while running both stages.
@@ -118,22 +131,12 @@ tempbuckets=()
 stage=-1
 location=''
 class=''
-manifest=/tmp/bucket-relocate-manifest.log
-steplog=/tmp/bucket-relocate-step.log
-debugout=/tmp/bucket-relocate-debug.log
-permcheckout=/tmp/bucket-relocate-permcheck.log
+manifest=/tmp/relocate-manifest-
+steplog=/tmp/relocate-step-
+debugout=/tmp/relocate-debug.log
+permcheckout=/tmp/relocate-permcheck-
 extra_verification=false
 
-# Keep track of the step we're at with each bucket using an associative array
-# and a file. NOTE: Associative arrays require Bash 4.0
-if [ ${BASH_VERSION:0:1} -lt 4 ]; then
-  echo "This script requires bash version 4 or higher." 1>&2;
-  exit 1
-fi
-declare -A steps
-if [ ! -f $steplog ]; then
-  touch $steplog
-fi
 
 function ParallelIfNoVersioning() {
   versioning=`$gsutil getversioning $1 | head -1`
@@ -158,6 +161,13 @@ function DeleteBucketWithRetry() {
   attempt=0
   success=false
   while [ $success == false ]; do
+    result=$(($gsutil -m rm -Ra $1/*) 2>&1)
+    if [ $? -ne 0 ]; then
+      if [[ "$result" != *No\ URIs\ matched* ]]; then
+        EchoErr "Failed to delete the objects from bucket: $1"
+        exit 1
+      fi
+    fi
     result=$(($gsutil rb $1) 2>&1)
     if [ $? -ne 0 ]; then
       if [[ "$result" == *code=BucketNotEmpty* ]]; then
@@ -186,29 +196,24 @@ function EchoErr() {
 }
 
 function LastStep() {
-  exec 3<$steplog
-  while read -u3 p; do
-    IFS=',' read -ra VARS <<< "$p"
-    vars_step=${VARS[0]}
-    vars_bucket=${VARS[1]}
-    steps[${vars_bucket}]=${vars_step}
-  done
-  s=${steps[$1]}
-  if [ "$s" == '' ]; then
-    echo "0"
+  short_name=${1:5}
+  if [ -f $steplog$short_name ]; then
+    echo `cat $steplog$short_name`
   else
-    echo $s
+    echo 0
   fi
 }
 
 function LogStepStart() {
-    echo $1
-    echo "START -- $1" >> $debugout
+  echo $1
+  echo "START -- $1" >> $debugout
 }
 
 function LogStepEnd() {
-    echo $1 >> $steplog
-    echo "END -- $1" >> $debugout
+  # $1 = bucket name, $2 = step number
+  short_name=${1:5}
+  echo $2 > $steplog$short_name
+  echo "END -- $1" >> $debugout
 }
 
 function BucketExists() {
@@ -284,8 +289,14 @@ while test $# -gt 0; do
     EchoErr "$1 is not a supported bucket name. Bucket names must start with gs://"
     exit 1
   fi
-  buckets=("${buckets[@]}" $1)
-  tempbuckets=("${tempbuckets[@]}" $1-relocate)
+  # Bucket names must be <= 55 characters long
+  max_length=$(( 55 + 5 ))  # + 5 for the prefix
+  if [ ${#1} -gt $max_length ]; then
+    EchoErr "The name of the bucket ($1) is too long."
+    exit 1
+  fi
+  buckets=("${buckets[@]}" ${1%/})
+  tempbuckets=("${tempbuckets[@]}" ${1%/}-relocate)
   shift
 done
 
@@ -361,7 +372,7 @@ function Stage1 {
         EchoErr "Validation check failed: The specified bucket does not exist: $bucket"
         exit 1
       fi
-      LogStepEnd "1,$src"
+      LogStepEnd $src 1
     fi
 
     # Verify that we can read all the objects.
@@ -371,17 +382,18 @@ function Stage1 {
         # The following will attempt to HEAD each object in the bucket, to
         # ensure the credentials running this script have read access to all data
         # being migrated.
-        $gsutil ls -L $src/** &> $permcheckout
-        grep -q 'ACCESS DENIED' $permcheckout
+        short_name=${src:5}
+        $gsutil ls -L $src/** &> $permcheckout$short_name
+        grep -q 'ACCESS DENIED' $permcheckout$short_name
         if [ $? -eq 0 ]; then
           EchoErr "Validation failed: Access denied reading an object from $src."
-          EchoErr "Check the log file ($permcheckout) for more details."
+          EchoErr "Check the log file ($permcheckout$short_name) for more details."
           exit 1
         fi
-        LogStepEnd "2,$src"
+        LogStepEnd $src 2
       else
         LogStepStart "Step 2: ($src) - Skipping object permissions check."
-        LogStepEnd "2,$src"
+        LogStepEnd $src 2
       fi
     fi
 
@@ -403,7 +415,7 @@ function Stage1 {
         EchoErr "Check the log file ($debugout) for more details."
         exit 1
       fi
-      LogStepEnd "3,$src"
+      LogStepEnd $src 3
     fi
   done
 
@@ -411,6 +423,7 @@ function Stage1 {
   for i in ${!buckets[*]}; do
     src=${buckets[$i]}
     dst=${tempbuckets[$i]}
+    bman=$manifest${src:5}  # The manifest contains the short name of the bucket
 
     # verify that the bucket does not yet exist and create it in the
     # correct location with the correct storage class
@@ -427,7 +440,7 @@ function Stage1 {
           exit 1
         fi
       fi
-      LogStepEnd "4,$src"
+      LogStepEnd $src 4
     fi
 
     if [ `LastStep "$src"` -eq 4 ]; then
@@ -441,67 +454,72 @@ function Stage1 {
       vpos=$((${#src} + 2))
       versioning=${versioning:vpos}
       if [ "$versioning" == 'Enabled' ]; then
-        # We need to turn this on in case we are copying versioned objects.
+        # We need to turn this on when we are copying versioned objects.
         $gsutil setversioning on $dst
         if [ $? -ne 0 ]; then
           EchoErr "Failed to turn on versioning on the temporary bucket: $dst"
           exit 1
         fi
       fi
-      LogStepEnd "5,$src"
+      LogStepEnd $src 5
     fi
 
     # Copy the objects from the source bucket to the temp bucket
     if [ `LastStep "$src"` -eq 5 ]; then
       LogStepStart "Step 6: ($src) - Copy objects from source to the temporary bucket ($dst) via local machine."
       parallel=`ParallelIfNoVersioning $src`
-      $gsutil $parallel cp -R -p -L $manifest -D $src/* $dst/
+      $gsutil $parallel cp -R -p -L $bman -D $src/* $dst/
       if [ $? -ne 0 ]; then
         EchoErr "Failed to copy objects from $src to $dst."
         exit 1
       fi
-      LogStepEnd "6,$src"
+      LogStepEnd $src 6
     fi
 
     # Backup the metadata for the bucket
     if [ `LastStep "$src"` -eq 6 ]; then
       short_name=${src:5}
       LogStepStart "Step 7: ($src) - Backup the bucket metadata."
-      $gsutil getdefacl $src > /tmp/bucket-relocate-defacl-for-$short_name
+      $gsutil getdefacl $src > /tmp/relocate-defacl-for-$short_name
       if [ $? -ne 0 ]; then
         EchoErr "Failed to backup the default ACL configuration for $src"
         exit 1
       fi
-      $gsutil getwebcfg $src > /tmp/bucket-relocate-webcfg-for-$short_name
+      $gsutil getwebcfg $src > /tmp/relocate-webcfg-for-$short_name
       if [ $? -ne 0 ]; then
         EchoErr "Failed to backup the web configuration for $src"
         exit 1
       fi
-      $gsutil getlogging $src > /tmp/bucket-relocate-logging-for-$short_name
+      $gsutil getlogging $src > /tmp/relocate-logging-for-$short_name
       if [ $? -ne 0 ]; then
         EchoErr "Failed to backup the logging configuration for $src"
         exit 1
       fi
-      $gsutil getcors $src > /tmp/bucket-relocate-cors-for-$short_name
+      $gsutil getcors $src > /tmp/relocate-cors-for-$short_name
       if [ $? -ne 0 ]; then
         EchoErr "Failed to backup the CORS configuration for $src"
         exit 1
       fi
-      $gsutil getversioning $src > /tmp/bucket-relocate-vers-for-$short_name
+      $gsutil getversioning $src > /tmp/relocate-vers-for-$short_name
       if [ $? -ne 0 ]; then
         EchoErr "Failed to backup the versioning configuration for $src"
         exit 1
       fi
-      versioning=`cat /tmp/bucket-relocate-vers-for-$short_name | head -1`
-      LogStepEnd "7,$src"
+      versioning=`cat /tmp/relocate-vers-for-$short_name | head -1`
+      LogStepEnd $src 7
     fi
 
 
   done
 
   if [ $stage == 1 ]; then
-    # Only show this message if we aren't running both stages back-to-back.
-    echo "Stage 1 complete. Please ensure no reads or writes are occurring to your bucket(s) and then run stage 2."
+    # Only show this message if we are not running both stages back-to-back.
+    echo 'Stage 1 complete. Please ensure no reads or writes are occurring to your bucket(s) and then run stage 2.'
+    echo 'At this point, you can verify that the objects were correctly copied by doing:'
+    echo '    gsutil ls -L gs://yourbucket > ls.1'
+    echo '    gsutil ls -L gs://yourbucket-relocate > ls.2'
+    echo '    # Use some program that visually highlights diffs:'
+    echo '    vimdiff ls.1 ls.2'
   fi
 }
 
@@ -528,58 +546,48 @@ function Stage2 {
     if [ `LastStep "$src"` -eq 7 ]; then
       LogStepStart "Step 8: ($src) - Catch up any new objects that weren't copied."
       parallel=`ParallelIfNoVersioning $src`
-      $gsutil $parallel cp -R -p -L $manifest -D $src/* $dst/
+      $gsutil $parallel cp -R -p -L $bman -D $src/* $dst/
       if [ $? -ne 0 ]; then
         EchoErr "Failed to copy any new objects from $src to $dst"
         exit 1
       fi
-      LogStepEnd "8,$src"
+      LogStepEnd $src 8
     fi
 
     # Remove the old src bucket
     if [ `LastStep "$src"` -eq 8 ]; then
-      LogStepStart "Step 9: ($src) - Remove objects in source bucket."
-      $gsutil -m rm -Ra $src/*
-      if [ $? -ne 0 ]; then
-        EchoErr "Failed to remove the objects in $src"
-        exit 1
-      fi
-      LogStepEnd "9,$src"
+      LogStepStart "Step 9: ($src) - Delete the source bucket and objects."
+      DeleteBucketWithRetry $src
+      LogStepEnd $src 9
     fi
 
     if [ `LastStep "$src"` -eq 9 ]; then
-      LogStepStart "Step 10: ($src) - Remove the source bucket."
-      DeleteBucketWithRetry $src
-      LogStepEnd "10,$src"
-    fi
-
-    if [ `LastStep "$src"` -eq 10 ]; then
-      LogStepStart "Step 11: ($src) - Recreate the original bucket."
+      LogStepStart "Step 10: ($src) - Recreate the original bucket."
       $gsutil mb -l $location -c $class $src
       if [ $? -ne 0 ]; then
         EchoErr "Failed to recreate the bucket: $src"
         exit 1
       fi
-      LogStepEnd "11,$src"
+      LogStepEnd $src 10
     fi
 
-    if [ `LastStep "$src"` -eq 11 ]; then
+    if [ `LastStep "$src"` -eq 10 ]; then
       short_name=${src:5}
-      LogStepStart "Step 12: ($src) - Restore the bucket metadata."
+      LogStepStart "Step 11: ($src) - Restore the bucket metadata."
 
       # defacl
-      $gsutil setdefacl /tmp/bucket-relocate-defacl-for-$short_name $src
+      $gsutil setdefacl /tmp/relocate-defacl-for-$short_name $src
       if [ $? -ne 0 ]; then
         EchoErr "Failed to set the default ACL configuration on $src"
         exit 1
       fi
 
       # webcfg
-      page_suffix=`cat /tmp/bucket-relocate-webcfg-for-$short_name |\
+      page_suffix=`cat /tmp/relocate-webcfg-for-$short_name |\
           grep -o "<MainPageSuffix>.*</MainPageSuffix>" |\
           sed -e 's/<MainPageSuffix>//g' -e 's/<\/MainPageSuffix>//g'`
       if [ "$page_suffix" != '' ]; then page_suffix="-m $page_suffix"; fi
-      error_page=`cat /tmp/bucket-relocate-webcfg-for-$short_name |\
+      error_page=`cat /tmp/relocate-webcfg-for-$short_name |\
           grep -o "<NotFoundPage>.*</NotFoundPage>" |\
           sed -e 's/<NotFoundPage>//g' -e 's/<\/NotFoundPage>//g'`
       if [ "$error_page" != '' ]; then error_page="-e $error_page"; fi
@@ -590,11 +598,11 @@ function Stage2 {
       fi
 
       # logging
-      log_bucket=`cat /tmp/bucket-relocate-logging-for-$short_name |\
+      log_bucket=`cat /tmp/relocate-logging-for-$short_name |\
           grep -o "<LogBucket>.*</LogBucket>" |\
           sed -e 's/<LogBucket>//g' -e 's/<\/LogBucket>//g'`
       if [ "$log_bucket" != '' ]; then log_bucket="-b gs://$log_bucket"; fi
-      log_prefix=`cat /tmp/bucket-relocate-logging-for-$short_name |\
+      log_prefix=`cat /tmp/relocate-logging-for-$short_name |\
           grep -o "<LogObjectPrefix>.*</LogObjectPrefix>" |\
           sed -e 's/<LogObjectPrefix>//g' -e 's/<\/LogObjectPrefix>//g'`
       if [ "$log_prefix" != '' ]; then log_prefix="-o $log_prefix"; fi
@@ -607,14 +615,14 @@ function Stage2 {
       fi
 
       # cors
-      $gsutil setcors /tmp/bucket-relocate-cors-for-$short_name $src
+      $gsutil setcors /tmp/relocate-cors-for-$short_name $src
       if [ $? -ne 0 ]; then
         EchoErr "Failed to set the CORS configuration on $src"
         exit 1
       fi
 
       # versioning
-      versioning=`cat /tmp/bucket-relocate-vers-for-$short_name | head -1`
+      versioning=`cat /tmp/relocate-vers-for-$short_name | head -1`
       vpos=$((${#src} + 2))
       versioning=${versioning:vpos}
       if [ "$versioning" == 'Enabled' ]; then
@@ -625,45 +633,52 @@ function Stage2 {
         fi
       fi
 
-      LogStepEnd "12,$src"
+      LogStepEnd $src 11
     fi
 
-    if [ `LastStep "$src"` -eq 12 ]; then
-      LogStepStart "Step 13: ($src) - Copy all objects back to the original bucket (copy in the cloud)."
+    if [ `LastStep "$src"` -eq 11 ]; then
+      LogStepStart "Step 12: ($src) - Copy all objects back to the original bucket (copy in the cloud)."
       parallel=`ParallelIfNoVersioning $src`
       $gsutil $parallel cp -Rp $dst/* $src/
       if [ $? -ne 0 ]; then
         EchoErr "Failed to copy the objects back to the original bucket: $src"
         exit 1
       fi
-      LogStepEnd "13,$src"
+      LogStepEnd $src 12
     fi
 
-    if [ `LastStep "$src"` -eq 13 ]; then
-      LogStepStart "Step 14: ($src) - Delete the objects in the temporary bucket ($dst)."
-      $gsutil -m rm -Ra $dst/*
-      if [ $? -ne 0 ]; then
-        EchoErr "Failed to delete the objects from the temporary bucket:  $dst"
-        exit 1
-      fi
-      LogStepEnd "14,$src"
-    fi
-
-    if [ `LastStep "$src"` -eq 14 ]; then
-      LogStepStart "Step 15: ($src) - Delete the temporary bucket ($dst)."
+    if [ `LastStep "$src"` -eq 12 ]; then
+      LogStepStart "Step 13: ($src) - Delete the temporary bucket ($dst)."
       DeleteBucketWithRetry $dst
-      LogStepEnd "15,$src"
+      LogStepEnd $src 13
     fi
-
   done
 
-  if [ `LastStep "$src"` -eq 15 ]; then
-    mv $manifest $manifest.DONE
-    mv $steplog $steplog.DONE
-    mv $debugout $debugout.DONE
-    LogStepStart "($src): Completed."
-  fi
+  # Cleanup for each bucket
+  for i in ${!buckets[*]}; do
+    src=${buckets[$i]}
+    dst=${tempbuckets[$i]}
+    
+    if [ `LastStep "$src"` -eq 13 ]; then
+	  LogStepStart "Step 14: ($src) - Cleanup."
+      ssrc=${src:5}  # short src
+      mv $manifest$ssrc $manifest$ssrc.DONE
+      mv $steplog$ssrc $steplog$ssrc.DONE
+      if [ -f $permcheckout$ssrc ]; then
+        mv $permcheckout$ssrc $permcheckout$ssrc.DONE
+      fi
+      mv /tmp/relocate-defacl-for-$ssrc /tmp/relocate-defacl-for-$ssrc.DONE
+      mv /tmp/relocate-webcfg-for-$ssrc /tmp/relocate-webcfg-for-$ssrc.DONE
+      mv /tmp/relocate-logging-for-$ssrc /tmp/relocate-logging-for-$ssrc.DONE
+      mv /tmp/relocate-cors-for-$ssrc /tmp/relocate-cors-for-$ssrc.DONE
+      mv /tmp/relocate-vers-for-$ssrc /tmp/relocate-vers-for-$ssrc.DONE
+      LogStepEnd $src 14
+    fi
 
+    LogStepStart "($src): Completed."
+  done
+  
+  mv $debugout $debugout.DONE
 }
 
 if [ $stage == 0 ]; then

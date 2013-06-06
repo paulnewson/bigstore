@@ -37,7 +37,7 @@ class BucketRelocateTests(unittest.TestCase):
   def tearDown(self):
     print 'deleting test buckets'
     for bucket in self.buckets:
-      if self._GSUtil('ls %s' % bucket, raiseError=False):
+      if self._GSUtil('ls -a %s' % bucket, raiseError=False):
         self._GSUtil('-m rm -Ra %s/*' % bucket)
       self._GSUtil('rb %s' % bucket)
 
