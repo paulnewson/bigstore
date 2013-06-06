@@ -128,7 +128,7 @@ fi
 function ParallelIfNoVersioning() {
   versioning=`$gsutil getversioning $1 | head -1`
   if [ "$versioning" == '' ]; then
-    echo "Failed to retrieve versioning information for $1"
+    EchoErr "Failed to retrieve versioning information for $1"
     exit 1
   fi
   vpos=$((${#src} + 2))
@@ -315,7 +315,7 @@ fi
 
 # 2) Check if gsutil is configured correctly. Get the first bucket from a
 #    gsutil ls. We can safely assume there is at least one bucket otherwise
-#    we wouldn't be running this script.
+#    we would not be running this script.
 test_bucket=`$gsutil ls | head -1`
 if [ "$test_bucket" == '' ]; then
   EchoErr "gsutil does not seem to be configured. Please run gsutil config."
@@ -417,12 +417,22 @@ function Stage1 {
     fi
 
     if [ `LastStep "$src"` -eq 4 ]; then
-      LogStepStart "Step 5: ($src) - Turn on versioning on the temporary bucket."
-      # We need to turn this on in case we are copying versioned objects.
-      $gsutil setversioning on $dst
-      if [ $? -ne 0 ]; then
-        EchoErr "Failed to turn on versioning on the temporary bucket: $dst"
+      # If the source has versioning, so should the temporary bucket.
+      LogStepStart "Step 5: ($src) - Turn on versioning on the temporary bucket (if needed)."
+      versioning=`$gsutil getversioning $src | head -1`
+      if [ "$versioning" == '' ]; then
+        EchoErr "Failed to retrieve versioning information for $src"
         exit 1
+      fi
+      vpos=$((${#src} + 2))
+      versioning=${versioning:vpos}
+      if [ "$versioning" == 'Enabled' ]; then
+        # We need to turn this on in case we are copying versioned objects.
+        $gsutil setversioning on $dst
+        if [ $? -ne 0 ]; then
+          EchoErr "Failed to turn on versioning on the temporary bucket: $dst"
+          exit 1
+        fi
       fi
       LogStepEnd "5,$src"
     fi
