@@ -33,6 +33,11 @@
     GSResponseError: 404 Not Found
     <?xml version='1.0' encoding='UTF-8'?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>
   If I restart the script it usually completes, but these are worrisome; any idea why they're happening?
+  --> I was able to repro that error just running gsutil on the commandline,
+  trying to delete all the objects in a largish bucket followed by deleting
+  the bucket. I think this is just a consequence of our eventually consistent
+  bucket listings, so the solution is a sleep 5/retry loop. I repeated several
+  times (by hand) and was able eventually to delete the bucket.
 
 - I tried to relocate two buckets, both containing 231 objects. It failed
   the first time with the 404 error; when I restarted it got to this point
