@@ -26,5 +26,5 @@
   However, it actually did delete that temp bucket; and it didn't migrate the bucket.
   When I remove the /tmp log files and retried, it worked.
 
-- Bug: after migration of a versioned bucket the relocate_check file remains (MS
+- DONE: Bug: after migration of a versioned bucket the relocate_check file remains (MS
   working on this)

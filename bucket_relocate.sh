@@ -338,7 +338,7 @@ function Stage1 {
       fi
 
       # Remove the temporary file.
-      gsutil rm $src/$random_name &>> $debugout
+      gsutil rm -a $src/$random_name &>> $debugout
       if [ $? -ne 0 ]; then
         EchoErr "Validation failed: Could not delete temporary object: $src/$random_name"
         EchoErr "Check the log file ($debugout) for more details."
