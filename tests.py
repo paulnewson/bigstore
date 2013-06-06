@@ -10,8 +10,8 @@ class BucketRelocateTests(unittest.TestCase):
 
   def setUp(self):
     self.buckets = []
-    print "\n\n\n"
-    print "creating test buckets"
+    print '\n\n\n'
+    print 'creating test buckets'
     self.buckets.append('gs://relocate_test_%s' % (
         ''.join(random.choice(string.ascii_lowercase) for x in range(10))))
     self.buckets.append('gs://relocate_test_%s' % (
@@ -21,7 +21,7 @@ class BucketRelocateTests(unittest.TestCase):
     self._GSUtil('-m cp -R gs://relotestdata/* %s' % self.buckets[0])
 
   def tearDown(self):
-    print "deleting test buckets"
+    print 'deleting test buckets'
     for bucket in self.buckets:
       if self._GSUtil('ls %s' % bucket, raiseError=False):
         self._GSUtil('-m rm -Ra %s/*' % bucket)
@@ -101,26 +101,26 @@ class BucketRelocateTests(unittest.TestCase):
   def test_ConfigDefacl(self):
     bucket = self.buckets[0]
     self._GSUtil('setdefacl public-read %s' % bucket)
-    cfg_before = self._GSUtil("getdefacl %s" % bucket)
+    cfg_before = self._GSUtil('getdefacl %s' % bucket)
     self._Relocate(stage='-A', buckets=[bucket])
-    cfg_after = self._GSUtil("getdefacl %s" % bucket)
+    cfg_after = self._GSUtil('getdefacl %s' % bucket)
     self.assertEqual(cfg_before, cfg_after)
 
   def test_ConfigWebcfg(self):
     bucket = self.buckets[0]
     self._GSUtil('setwebcfg -m main.html -e error.html %s' % bucket)
-    cfg_before = self._GSUtil("getwebcfg %s" % bucket)
+    cfg_before = self._GSUtil('getwebcfg %s' % bucket)
     self._Relocate(stage='-A', buckets=[bucket])
-    cfg_after = self._GSUtil("getwebcfg %s" % bucket)
+    cfg_after = self._GSUtil('getwebcfg %s' % bucket)
     self.assertEqual(cfg_before, cfg_after)
 
   def test_ConfigLogging(self):
     bucket = self.buckets[0]
     log_bucket = self.buckets[1]
     self._GSUtil('enablelogging -b %s -o tstlog %s' % (log_bucket, bucket))
-    cfg_before = self._GSUtil("getlogging %s" % bucket)
+    cfg_before = self._GSUtil('getlogging %s' % bucket)
     self._Relocate(stage='-A', buckets=[bucket])
-    cfg_after = self._GSUtil("getlogging %s" % bucket)
+    cfg_after = self._GSUtil('getlogging %s' % bucket)
     self.assertEqual(cfg_before, cfg_after)
 
   def test_ConfigCors(self):
@@ -134,18 +134,18 @@ class BucketRelocateTests(unittest.TestCase):
     f.write(cors)
     f.flush()
     self._GSUtil('setcors %s %s' % (f.name, bucket))
-    cfg_before = self._GSUtil("getcors %s" % bucket)
+    cfg_before = self._GSUtil('getcors %s' % bucket)
     self._Relocate(stage='-A', buckets=[bucket])
-    cfg_after = self._GSUtil("getcors %s" % bucket)
+    cfg_after = self._GSUtil('getcors %s' % bucket)
     self.assertEqual(cfg_before, cfg_after)
     f.close()
 
   def test_ConfigVersioning(self):
     bucket = self.buckets[0]
     self._GSUtil('setversioning on %s' % bucket)
-    cfg_before = self._GSUtil("getversioning %s" % bucket)
+    cfg_before = self._GSUtil('getversioning %s' % bucket)
     self._Relocate(stage='-A', buckets=[bucket])
-    cfg_after = self._GSUtil("getversioning %s" % bucket)
+    cfg_after = self._GSUtil('getversioning %s' % bucket)
     self.assertEqual(cfg_before, cfg_after)
 
   def test_VersionedObjects(self):

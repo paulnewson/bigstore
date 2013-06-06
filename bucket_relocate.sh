@@ -476,11 +476,30 @@ function Stage2 {
 
     if [ `LastStep "$src"` -eq 9 ]; then
       LogStepStart "Step 10: ($src) - Remove the source bucket."
-      $gsutil rb $src
-      if [ $? -ne 0 ]; then
-        EchoErr "Failed to remove the bucket: $src"
-        exit 1
-      fi
+
+      # Add some retries because occasionally the object deletes are a bit
+      # delayed.
+      attempt=0
+      success=false
+      while [ $success == false ]; do
+        result=$(($gsutil rb $src) 2>&1)
+        if [ $? -ne 0 ]; then
+          if [[ "$result" == *code=BucketNotEmpty* ]]; then
+            attempt=$(( $attempt+1 ))
+            if [ $attempt -gt 5 ]; then
+              EchoErr "Failed to remove the bucket: $src"
+              exit 1
+            else
+              sleep 5s
+            fi
+          else
+            EchoErr "Failed to remove the bucket: $src"
+            exit 1
+          fi
+        else
+          success=true
+        fi
+      done
       LogStepEnd "10,$src"
     fi
 
@@ -580,14 +599,31 @@ function Stage2 {
     fi
 
     if [ `LastStep "$src"` -eq 14 ]; then
-      # Pauses for a while so that the deletes can catch up.
-      sleep 5s
       LogStepStart "Step 15: ($src) - Delete the temporary bucket ($dst)."
-      $gsutil rb $dst
-      if [ $? -ne 0 ]; then
-        EchoErr "Failed to delete the temporary bucket:  $dst"
-        exit 1
-      fi
+
+      # Add some retries because occasionally the object deletes are a bit
+      # delayed.
+      attempt=0
+      success=false
+      while [ $success == false ]; do
+        result=$(($gsutil rb $dst) 2>&1)
+        if [ $? -ne 0 ]; then
+          if [[ "$result" == *code=BucketNotEmpty* ]]; then
+            attempt=$(( $attempt+1 ))
+            if [ $attempt -gt 5 ]; then
+              EchoErr "Failed to delete the temporary bucket:  $dst"
+              exit 1
+            else
+              sleep 5s
+            fi
+          else
+            EchoErr "Failed to delete the temporary bucket:  $dst"
+            exit 1
+          fi
+        else
+          success=true
+        fi
+      done
       LogStepEnd "15,$src"
     fi
 
