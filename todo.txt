@@ -20,6 +20,8 @@
   number of objects, gsutil seems to return before all the objects have been
   deleted in the backend. If we do a remove bucket call immediately the
   call may fail because the bucket is not seen to be empty.
+  RH: I've added 24 retries with 5s between each retry. That gives us 2 mins
+  of total delay before we fail. Is this enough?
 
 - Bug: I just tried migrating a versioned bucket from us/dra to eu/standard.
   at step 15 of stage 2 it printed:

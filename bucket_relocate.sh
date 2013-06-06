@@ -127,6 +127,10 @@ fi
 
 function ParallelIfNoVersioning() {
   versioning=`$gsutil getversioning $1 | head -1`
+  if [ "$versioning" == '' ]; then
+    echo "Failed to retrieve versioning information for $1"
+    exit 1
+  fi
   vpos=$((${#src} + 2))
   versioning=${versioning:vpos}
   if [ "$versioning" == 'Enabled' ]; then
@@ -136,6 +140,33 @@ function ParallelIfNoVersioning() {
   else
    echo "-m"
   fi
+}
+
+function DeleteBucketWithRetry() {
+  # Add some retries as occasionally the object deletes need to filter
+  # through the system.
+  attempt=0
+  success=false
+  while [ $success == false ]; do
+    result=$(($gsutil rb $1) 2>&1)
+    if [ $? -ne 0 ]; then
+      if [[ "$result" == *code=BucketNotEmpty* ]]; then
+        attempt=$(( $attempt+1 ))
+        if [ $attempt -gt 24 ]; then
+          EchoErr "Failed to remove the bucket: $1"
+          exit 1
+        else
+          EchoErr "Waiting for buckets to empty."
+          sleep 5s
+        fi
+      else
+        EchoErr "Failed to remove the bucket: $1"
+        exit 1
+      fi
+    else
+      success=true
+    fi
+  done
 }
 
 function EchoErr() {
@@ -343,7 +374,8 @@ function Stage1 {
     # Verify WRITE access to the bucket.
     if [ `LastStep "$src"` -eq 2 ]; then
       LogStepStart "Step 3: ($src) - Checking write permissions."
-      random_name="relocate_check_`tr -dc "[:alpha:]" < /dev/urandom | head -c 60`"
+      random_name="relocate_check_`cat /dev/urandom |\
+          LANG=C tr -dc 'a-zA-Z' | head -c 60`"
       echo 'relocate access check' | gsutil cp - $src/$random_name &>> $debugout
       if [ $? -ne 0 ]; then
         EchoErr "Validation check failed: Access denied writing to $src."
@@ -493,30 +525,7 @@ function Stage2 {
 
     if [ `LastStep "$src"` -eq 9 ]; then
       LogStepStart "Step 10: ($src) - Remove the source bucket."
-
-      # Add some retries because occasionally the object deletes are a bit
-      # delayed.
-      attempt=0
-      success=false
-      while [ $success == false ]; do
-        result=$(($gsutil rb $src) 2>&1)
-        if [ $? -ne 0 ]; then
-          if [[ "$result" == *code=BucketNotEmpty* ]]; then
-            attempt=$(( $attempt+1 ))
-            if [ $attempt -gt 5 ]; then
-              EchoErr "Failed to remove the bucket: $src"
-              exit 1
-            else
-              sleep 5s
-            fi
-          else
-            EchoErr "Failed to remove the bucket: $src"
-            exit 1
-          fi
-        else
-          success=true
-        fi
-      done
+      DeleteBucketWithRetry $src
       LogStepEnd "10,$src"
     fi
 
@@ -618,30 +627,7 @@ function Stage2 {
 
     if [ `LastStep "$src"` -eq 14 ]; then
       LogStepStart "Step 15: ($src) - Delete the temporary bucket ($dst)."
-
-      # Add some retries because occasionally the object deletes are a bit
-      # delayed.
-      attempt=0
-      success=false
-      while [ $success == false ]; do
-        result=$(($gsutil rb $dst) 2>&1)
-        if [ $? -ne 0 ]; then
-          if [[ "$result" == *code=BucketNotEmpty* ]]; then
-            attempt=$(( $attempt+1 ))
-            if [ $attempt -gt 5 ]; then
-              EchoErr "Failed to delete the temporary bucket:  $dst"
-              exit 1
-            else
-              sleep 5s
-            fi
-          else
-            EchoErr "Failed to delete the temporary bucket:  $dst"
-            exit 1
-          fi
-        else
-          success=true
-        fi
-      done
+      DeleteBucketWithRetry $dst
       LogStepEnd "15,$src"
     fi
 
