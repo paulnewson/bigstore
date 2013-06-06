@@ -78,8 +78,8 @@ Caveats:
 5) Buckets with names longer than 55 characters can not be migrated.
    This is because the resulting temporary bucket name will be too long (>63
    characters).
-6) Since this script stores state in /tmp, please do not restart the machine
-   during this process.
+6) Since this script stores state in ~/bucketrelo/. Please do not remove this
+   directory until the scripts have completed successfully.
 
 If your application overwrites or deletes objects, we recommend disabling all
 writes while running both stages.
@@ -137,12 +137,25 @@ tempbuckets=()
 stage=-1
 location=''
 class=''
-manifest=/tmp/relocate-manifest-
-steplog=/tmp/relocate-step-
-debugout=/tmp/relocate-debug.log
-permcheckout=/tmp/relocate-permcheck-
-extra_verification=false
+basedir=~/bucketrelo
+manifest=$basedir/relocate-manifest-
+steplog=$basedir/relocate-step-
+debugout=$basedir/relocate-debug.log
+permcheckout=$basedir/relocate-permcheck-
+metadefacl=$basedir/relocate-defacl-for-
+metawebcfg=$basedir/relocate-webcfg-for-
+metalogging=$basedir/relocate-logging-for-
+metacors=$basedir/relocate-cors-for-
+metavers=$basedir/relocate-vers-for-
 
+# Create the working directory where we store all the temporary state.
+if [ ! -d $basedir ]; then
+  mkdir $basedir
+  if [ $? -ne 0 ]; then
+    echo "Could not create $basedir."
+    exit 1
+  fi
+fi
 
 function ParallelIfNoVersioning() {
   versioning=`$gsutil getversioning $1 | head -1`
@@ -230,7 +243,6 @@ function BucketExists() {
     echo false
   fi
 }
-
 
 # Parse command line arguments
 while getopts ":?12Ac:l:v" opt; do
@@ -486,32 +498,32 @@ function Stage1 {
     if [ `LastStep "$src"` -eq 6 ]; then
       short_name=${src:5}
       LogStepStart "Step 7: ($src) - Backup the bucket metadata."
-      $gsutil getdefacl $src > /tmp/relocate-defacl-for-$short_name
+      $gsutil getdefacl $src > $metadefacl$short_name
       if [ $? -ne 0 ]; then
         EchoErr "Failed to backup the default ACL configuration for $src"
         exit 1
       fi
-      $gsutil getwebcfg $src > /tmp/relocate-webcfg-for-$short_name
+      $gsutil getwebcfg $src > $metawebcfg$short_name
       if [ $? -ne 0 ]; then
         EchoErr "Failed to backup the web configuration for $src"
         exit 1
       fi
-      $gsutil getlogging $src > /tmp/relocate-logging-for-$short_name
+      $gsutil getlogging $src > $metalogging$short_name
       if [ $? -ne 0 ]; then
         EchoErr "Failed to backup the logging configuration for $src"
         exit 1
       fi
-      $gsutil getcors $src > /tmp/relocate-cors-for-$short_name
+      $gsutil getcors $src > $metacors$short_name
       if [ $? -ne 0 ]; then
         EchoErr "Failed to backup the CORS configuration for $src"
         exit 1
       fi
-      $gsutil getversioning $src > /tmp/relocate-vers-for-$short_name
+      $gsutil getversioning $src > $metavers$short_name
       if [ $? -ne 0 ]; then
         EchoErr "Failed to backup the versioning configuration for $src"
         exit 1
       fi
-      versioning=`cat /tmp/relocate-vers-for-$short_name | head -1`
+      versioning=`cat $metavers$short_name | head -1`
       LogStepEnd $src 7
     fi
 
@@ -582,18 +594,18 @@ function Stage2 {
       LogStepStart "Step 11: ($src) - Restore the bucket metadata."
 
       # defacl
-      $gsutil setdefacl /tmp/relocate-defacl-for-$short_name $src
+      $gsutil setdefacl $metadefacl$short_name $src
       if [ $? -ne 0 ]; then
         EchoErr "Failed to set the default ACL configuration on $src"
         exit 1
       fi
 
       # webcfg
-      page_suffix=`cat /tmp/relocate-webcfg-for-$short_name |\
+      page_suffix=`cat $metawebcfg$short_name |\
           grep -o "<MainPageSuffix>.*</MainPageSuffix>" |\
           sed -e 's/<MainPageSuffix>//g' -e 's/<\/MainPageSuffix>//g'`
       if [ "$page_suffix" != '' ]; then page_suffix="-m $page_suffix"; fi
-      error_page=`cat /tmp/relocate-webcfg-for-$short_name |\
+      error_page=`cat $metawebcfg$short_name |\
           grep -o "<NotFoundPage>.*</NotFoundPage>" |\
           sed -e 's/<NotFoundPage>//g' -e 's/<\/NotFoundPage>//g'`
       if [ "$error_page" != '' ]; then error_page="-e $error_page"; fi
@@ -604,11 +616,11 @@ function Stage2 {
       fi
 
       # logging
-      log_bucket=`cat /tmp/relocate-logging-for-$short_name |\
+      log_bucket=`cat $metalogging$short_name |\
           grep -o "<LogBucket>.*</LogBucket>" |\
           sed -e 's/<LogBucket>//g' -e 's/<\/LogBucket>//g'`
       if [ "$log_bucket" != '' ]; then log_bucket="-b gs://$log_bucket"; fi
-      log_prefix=`cat /tmp/relocate-logging-for-$short_name |\
+      log_prefix=`cat $metalogging$short_name |\
           grep -o "<LogObjectPrefix>.*</LogObjectPrefix>" |\
           sed -e 's/<LogObjectPrefix>//g' -e 's/<\/LogObjectPrefix>//g'`
       if [ "$log_prefix" != '' ]; then log_prefix="-o $log_prefix"; fi
@@ -621,14 +633,14 @@ function Stage2 {
       fi
 
       # cors
-      $gsutil setcors /tmp/relocate-cors-for-$short_name $src
+      $gsutil setcors $metacors$short_name $src
       if [ $? -ne 0 ]; then
         EchoErr "Failed to set the CORS configuration on $src"
         exit 1
       fi
 
       # versioning
-      versioning=`cat /tmp/relocate-vers-for-$short_name | head -1`
+      versioning=`cat $metavers$short_name | head -1`
       vpos=$((${#src} + 2))
       versioning=${versioning:vpos}
       if [ "$versioning" == 'Enabled' ]; then
@@ -673,12 +685,11 @@ function Stage2 {
       if [ -f $permcheckout$ssrc ]; then
         mv $permcheckout$ssrc $permcheckout$ssrc.DONE
       fi
-      mv /tmp/relocate-defacl-for-$ssrc /tmp/relocate-defacl-for-$ssrc.DONE
-      mv /tmp/relocate-webcfg-for-$ssrc /tmp/relocate-webcfg-for-$ssrc.DONE
-      mv /tmp/relocate-logging-for-$ssrc /tmp/relocate-logging-for-$ssrc.DONE
-      mv /tmp/relocate-cors-for-$ssrc /tmp/relocate-cors-for-$ssrc.DONE
-      mv /tmp/relocate-vers-for-$ssrc /tmp/relocate-vers-for-$ssrc.DONE
-      LogStepEnd $src 14
+      mv $metadefacl$ssrc $metadefacl$ssrc.DONE
+      mv $metawebcfg$ssrc $metawebcfg$ssrc.DONE
+      mv $metalogging$ssrc $metalogging$ssrc.DONE
+      mv $metacors$ssrc $metacors$ssrc.DONE
+      mv $metavers$ssrc $metavers$ssrc.DONE
     fi
 
     LogStepStart "($src): Completed."
