@@ -162,12 +162,12 @@ function DeleteBucketWithRetry() {
     if [ $? -ne 0 ]; then
       if [[ "$result" == *code=BucketNotEmpty* ]]; then
         attempt=$(( $attempt+1 ))
-        if [ $attempt -gt 24 ]; then
+        if [ $attempt -gt 30 ]; then
           EchoErr "Failed to remove the bucket: $1"
           exit 1
         else
           EchoErr "Waiting for buckets to empty."
-          sleep 5s
+          sleep 10s
         fi
       else
         EchoErr "Failed to remove the bucket: $1"

@@ -64,3 +64,5 @@
   the bucket. I think this is just a consequence of our eventually consistent
   bucket listings, so the solution is a sleep 5/retry loop. I repeated several
   times (by hand) and was able eventually to delete the bucket.
+
+- create a bunch of objects with various metadata and testing that they get relocated in full fidelity.
