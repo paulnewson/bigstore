@@ -41,18 +41,18 @@ temporary buckets by executing:
   vimdiff ls.1 ls.2
 
 Starting conditions:
-You must have at least version 3.30 of gsutil installed, with credentials (in your
-.boto config file) that have FULL_CONTROL access to all buckets and objects being
-migrated. If this script is run using credentials that lack these permissions it
-will fail part-way through, at which point you will need to change the ACLs of the
-affected objects and re-run the script. If you specify the -v option the script
-will check all permissions before starting the migration (which takes time,
-because it performs a HEAD on each object as well as a GET on the object's
-?acl subresource). If you do use the -v option it's possible the script will
-find no problems, begin the migration, and then encounter permission problems
-because of objects that are uploaded after the script begins. If that happens
-the script will fail part-way through and you will need to change the object
-ACLs and re-run the script.
+You must have at least version 4.0 of bash and version 3.30 of gsutil installed,
+with credentials (in your.boto config file) that have FULL_CONTROL access to all
+buckets and objects being migrated. If this script is run using credentials that
+lack these permissions it will fail part-way through, at which point you will
+need to change the ACLs of the affected objects and re-run the script. If you
+specify the -v option the script will check all permissions before starting the
+migration (which takes time, because it performs a HEAD on each object as well
+as a GET on the object's ?acl subresource). If you do use the -v option it's
+possible the script will find no problems, begin the migration, and then
+encounter permission problems because of objects that are uploaded after the
+script begins. If that happens the script will fail part-way through and you
+will need to change the object ACLs and re-run the script.
 
 If you need to change ACLs you can do so using a command like:
 
@@ -137,6 +137,8 @@ tempbuckets=()
 stage=-1
 location=''
 class=''
+extra_verification=false
+
 basedir=~/bucketrelo
 manifest=$basedir/relocate-manifest-
 steplog=$basedir/relocate-step-
@@ -148,6 +150,12 @@ metalogging=$basedir/relocate-logging-for-
 metacors=$basedir/relocate-cors-for-
 metavers=$basedir/relocate-vers-for-
 
+# This script requires Bash 4.0 or higher
+if [ ${BASH_VERSION:0:1} -lt 4 ]; then
+  echo "This script requires bash version 4 or higher." 1>&2;
+  exit 1
+fi
+
 # Create the working directory where we store all the temporary state.
 if [ ! -d $basedir ]; then
   mkdir $basedir
@@ -156,6 +164,7 @@ if [ ! -d $basedir ]; then
     exit 1
   fi
 fi
+
 
 function ParallelIfNoVersioning() {
   versioning=`$gsutil getversioning $1 | head -1`
