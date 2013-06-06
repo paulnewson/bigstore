@@ -641,14 +641,15 @@ function Stage2 {
       LogStepEnd "15,$src"
     fi
 
-    if [ `LastStep "$src"` -eq 15 ]; then
-      mv $manifest $manifest.DONE
-      mv $steplog $steplog.DONE
-      mv $debugout $debugout.DONE
-      LogStepStart "($src): Completed."
-    fi
-
   done
+
+  if [ `LastStep "$src"` -eq 15 ]; then
+    mv $manifest $manifest.DONE
+    mv $steplog $steplog.DONE
+    mv $debugout $debugout.DONE
+    LogStepStart "($src): Completed."
+  fi
+
 }
 
 if [ $stage == 0 ]; then
