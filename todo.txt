@@ -13,6 +13,9 @@
 - DONE. Add some test cases that will automatically test all the different
   configurations and scenarios so that we don't regress when we make changes.
 
+- DONE: Bug: after migration of a versioned bucket the relocate_check file remains (MS
+  working on this)
+
 - Add some retries to the bucket deletions. Sometimes when we delete a large
   number of objects, gsutil seems to return before all the objects have been
   deleted in the backend. If we do a remove bucket call immediately the
@@ -26,5 +29,31 @@
   However, it actually did delete that temp bucket; and it didn't migrate the bucket.
   When I remove the /tmp log files and retried, it worked.
 
-- DONE: Bug: after migration of a versioned bucket the relocate_check file remains (MS
-  working on this)
+- Once I try to migrate a bucket with a few dozen+ objects, I see messages like this:
+    GSResponseError: 404 Not Found
+    <?xml version='1.0' encoding='UTF-8'?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>
+  If I restart the script it usually completes, but these are worrisome; any idea why they're happening?
+
+- I tried to relocate two buckets, both containing 231 objects. It failed
+  the first time with the 404 error; when I restarted it got to this point
+  and failed more badly:
+    Step 15: (gs://mfsbucket) - Delete the temporary bucket (gs://mfsbucket-relocate).
+    (gs://mfsbucket): Completed.
+    ./bucket_relocate.sh: line 135: /tmp/bucket-relocate-step.log: No such file or directory
+    ./bucket_relocate.sh: line 136: read: 3: invalid file descriptor: Bad file descriptor
+    ./bucket_relocate.sh: line 135: /tmp/bucket-relocate-step.log: No such file or directory
+    ./bucket_relocate.sh: line 136: read: 3: invalid file descriptor: Bad file descriptor
+    ./bucket_relocate.sh: line 135: /tmp/bucket-relocate-step.log: No such file or directory
+    ./bucket_relocate.sh: line 136: read: 3: invalid file descriptor: Bad file descriptor
+    ./bucket_relocate.sh: line 135: /tmp/bucket-relocate-step.log: No such file or directory
+    ./bucket_relocate.sh: line 136: read: 3: invalid file descriptor: Bad file descriptor
+    ./bucket_relocate.sh: line 135: /tmp/bucket-relocate-step.log: No such file or directory
+    ./bucket_relocate.sh: line 136: read: 3: invalid file descriptor: Bad file descriptor
+    ./bucket_relocate.sh: line 135: /tmp/bucket-relocate-step.log: No such file or directory
+    ./bucket_relocate.sh: line 136: read: 3: invalid file descriptor: Bad file descriptor
+    ./bucket_relocate.sh: line 135: /tmp/bucket-relocate-step.log: No such file or directory
+    ./bucket_relocate.sh: line 136: read: 3: invalid file descriptor: Bad file descriptor
+    ./bucket_relocate.sh: line 135: /tmp/bucket-relocate-step.log: No such file or directory
+    ./bucket_relocate.sh: line 136: read: 3: invalid file descriptor: Bad file descriptor
+    ./bucket_relocate.sh: line 135: /tmp/bucket-relocate-step.log: No such file or directory
+    ./bucket_relocate.sh: line 136: read: 3: invalid file descriptor: Bad file descriptor
