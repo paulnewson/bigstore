@@ -26,16 +26,21 @@ to the temporary bucket(s), the original buckets are deleted and recreated in
 the new location/storage class, data are copied-in-the-cloud from the
 temporary to the re-created bucket(s), and the temporary bucket(s) deleted.
 Stage 1 can take a long time (depending on how much data you have and how
-fast your network connection is); stage 2 should run quickly. You should
-ensure no reads or writes are occurring to your bucket during the brief period
+fast your network connection is); stage 2 should run quickly, unless a large
+amount of data was added to the bucket while stage 1 was running. You should
+ensure that no reads or writes occur to your bucket during the brief period
 while stage 2 runs.
 
 Starting conditions:
-You must have at least version 4.0 of bash and version 3.30 of gsutil
-installed, with credentials that have FULL_CONTROL access to the bucket and
-READ access to all objects in the bucket. If this script is run by a user that
-lacks these permissions the script may fail part-way through. Should this
-happen, the permissions will need to be fixed and the script can be rerun.
+You must have at least version 4.0 of bash and version 3.30 of gsutil installed,
+with credentials (in your .boto config file) that have FULL_CONTROL access to
+the bucket and READ access to all objects in the bucket. If this script is run
+by an account that lacks these permissions the script will attempt to detect
+that problem and refuse the begin the migration. However, it's possible that
+the script finds no such problems and begins the migration, and then objects
+are uploaded with ACLs that prevent read access by the account running the
+script. If that happens the script will fail part-way through, at which point
+you will need to change the permissions of the new objects and re-run the script.
 
 Caveats:
 1) If an object is deleted from the original bucket after it has been processed
@@ -51,7 +56,7 @@ Caveats:
      gs://bucket/obj#1340448460830000 and gs://bucket/obj#1350448460830000
    the restored bucket might have objects with these versions:
      gs://bucket/obj#1360448460830000 and gs://bucket/obj#1370448460830000
-   Beware of this problem if you have code that stores the version-ful name
+   Beware of this caveat if you have code that stores the version-ful name
    of objects (e.g., in a database).
 
 If your application overwrites or deletes objects, we recommend disabling all
@@ -358,6 +363,9 @@ function Stage1 {
     if [ `LastStep "$src"` -eq 1 ]; then
       if $extra_verification ; then
         LogStepStart "Step 2: ($src) - Check object permissions. This may take a while..."
+        # The following will attempt to HEAD each object in the bucket, to
+        # ensure the credentials running this script have read access to all data
+        # being migrated.
         $gsutil ls -L $src/** &>> $debugout
         if [ $? -ne 0 ]; then
           EchoErr "Validation failed: Access denied reading an object from $src."
