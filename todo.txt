@@ -40,7 +40,7 @@
     ./bucket_relocate.sh: line 135: /tmp/bucket-relocate-step.log: No such file or directory
     ./bucket_relocate.sh: line 136: read: 3: invalid file descriptor: Bad file descriptor
 
-- Add some retries to the bucket deletions. Sometimes when we delete a large
+- DONE: Add some retries to the bucket deletions. Sometimes when we delete a large
   number of objects, gsutil seems to return before all the objects have been
   deleted in the backend. If we do a remove bucket call immediately the
   call may fail because the bucket is not seen to be empty.
@@ -65,4 +65,5 @@
   bucket listings, so the solution is a sleep 5/retry loop. I repeated several
   times (by hand) and was able eventually to delete the bucket.
 
-- create a bunch of objects with various metadata and testing that they get relocated in full fidelity.
+- create a bunch of objects with various metadata and testing that they get
+  relocated in full fidelity.
