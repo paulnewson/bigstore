@@ -1,4 +1,4 @@
-- misses copying versioned objects (MS working on this)
+- DONE: misses copying versioned objects (MS working on this)
 
 - DONE. bash "set -e" doesn't work; do explicit response code checks (RH working on this)
 
@@ -13,12 +13,18 @@
 - DONE. Add some test cases that will automatically test all the different
   configurations and scenarios so that we don't regress when we make changes.
 
-- DONE: Add some retries to the bucket deletions. Sometimes when we delete a large
+- Add some retries to the bucket deletions. Sometimes when we delete a large
   number of objects, gsutil seems to return before all the objects have been
   deleted in the backend. If we do a remove bucket call immediately the
   call may fail because the bucket is not seen to be empty.
 
-- Instead of hard-coding the step numbers, make it more dynamic by keeping
-  a count. This will make adding steps less error-prone.
+- Bug: I just tried migrating a versioned bucket from us/dra to eu/standard.
+  at step 15 of stage 2 it printed:
+    Removing gs://mfsbucket-relocate/...
+    GSResponseError: status=404, code=NoSuchBucket, reason=Not Found.
+    Failed to delete the temporary bucket:  gs://mfsbucket-relocate
+  However, it actually did delete that temp bucket; and it didn't migrate the bucket.
+  When I remove the /tmp log files and retried, it worked.
 
-- Create an automated test that automatically stops the process at a random time.
+- Bug: after migration of a versioned bucket the relocate_check file remains (MS
+  working on this)
