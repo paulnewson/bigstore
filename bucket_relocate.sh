@@ -46,6 +46,13 @@ Caveats:
    script.
 4) The script expects that the identity under which this script is run can read
    and write all the buckets and objects which need to be migrated.
+5) Restored objects in versioned buckets will preserve the version ordering but
+   not version numbers. For example, if the original bucket contained:
+     gs://bucket/obj#1340448460830000 and gs://bucket/obj#1350448460830000
+   the restored bucket might have objects with these versions:
+     gs://bucket/obj#1360448460830000 and gs://bucket/obj#1370448460830000
+   Beware of this problem if you have code that stores the version-ful name
+   of objects (e.g., in a database).
 
 If your application overwrites or deletes objects, we recommend disabling all
 writes while running both stages.
