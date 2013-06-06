@@ -21,39 +21,45 @@ This script can be used to migrate one or more buckets to a different
 location and/or storage class. It operates in two stages: In stage 1, a
 temporary bucket is created in the new location/storage class corresponding
 to each bucket being migrated, and data are copied from the original to the
-new bucket(s). In stage 2 any newly created data are copied from the original
-to the temporary bucket(s), the original buckets are deleted and recreated in
-the new location/storage class, data are copied-in-the-cloud from the
-temporary to the re-created bucket(s), and the temporary bucket(s) deleted.
-Stage 1 can take a long time (depending on how much data you have and how
-fast your network connection is); stage 2 should run quickly, unless a large
-amount of data was added to the bucket while stage 1 was running. You should
-ensure that no reads or writes occur to your bucket during the brief period
-while stage 2 runs.
-To ensure that all data is correctly copied from the source to the temporary
+new bucket(s). In stage 2 any newly created data are copied from the original to
+the temporary bucket(s), the original buckets are deleted and recreated in the
+new location/storage class, data are copied from the temporary to the re-created
+bucket(s), and the temporary bucket(s) deleted. Stage 1 can take a long time
+because it copies all data via the local machine (because copy-in-the-cloud
+isn't support spanning locations or storage classes); stage 2 should run quickly
+(because it uses copy-in-the-cloud), unless a large amount of data was added
+to the bucket while stage 1 was running. You should ensure that no reads or
+writes occur to your bucket during the brief period while stage 2 runs.
+
+To ensure that all data are correctly copied from the source to the temporary
 bucket, we recommend running stage 1 first, and then comparing the source and
-temporary buckets executing:
+temporary buckets by executing:
 
   gsutil ls -L gs://yourbucket > ls.1
   gsutil ls -L gs://yourbucket-relocate > ls.2
-  # Use some program that visually highlights diffs:
+  # Use some program that visually highlights diffs, such as:
   vimdiff ls.1 ls.2
 
 Starting conditions:
-You must have at least version 3.30 of gsutil installed, with credentials (in
-your .boto config file) that have FULL_CONTROL access to all buckets and objects
-being migrated. If this script is run using credentials that lack these
-permissions it will fail part-way through, at which point you will need to
-change the ACLs of the affected objects and re-run the script.
-You can do so using a command like:
-  gsutil chacl -u scriptuser@gmail.com:FC gs://bucket/object
-If you specify the -v option the script will check all permissions before
-starting the migration (which takes time, because it performs a HEAD on each
-object as well as a GET on the object's ?acl subresource). If you do use the
--v option it's possible the script will find no problems, begin the migration,
-and then encounter permission problems because of objects that are uploaded
-after the script begins. If that happens the script will fail part-way through
-and you will need to change the object ACLs and re-run the script.
+You must have at least version 3.30 of gsutil installed, with credentials (in your
+.boto config file) that have FULL_CONTROL access to all buckets and objects being
+migrated. If this script is run using credentials that lack these permissions it
+will fail part-way through, at which point you will need to change the ACLs of the
+affected objects and re-run the script. If you specify the -v option the script
+will check all permissions before starting the migration (which takes time,
+because it performs a HEAD on each object as well as a GET on the object's
+?acl subresource). If you do use the -v option it's possible the script will
+find no problems, begin the migration, and then encounter permission problems
+because of objects that are uploaded after the script begins. If that happens
+the script will fail part-way through and you will need to change the object
+ACLs and re-run the script.
+
+If you need to change ACLs you can do so using a command like:
+
+  gsutil chacl -u scriptuser@gmail.com:FC gs://bucket/object1 gs://bucket/object2 ...
+
+where scriptuser@agmail.com is the identity for which your credentials are
+configured.
 
 Caveats:
 1) If an object is deleted from the original bucket after it has been processed
@@ -82,7 +88,7 @@ Usage:
    bucket_relocate.sh STAGE [OPTION]... bucket...
 
 Examples:
-   bucket_relocate.sh -2 gs://mybucket
+   bucket_relocate.sh -2 gs://mybucket1 gs://mybucket2
 
 STAGE
    The stage determines what stage should be executed:
