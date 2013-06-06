@@ -47,6 +47,9 @@
   RH: I've added 24 retries with 5s between each retry. That gives us 2 mins
   of total delay before we fail. Is this enough?
 
+- DONE: create a bunch of objects with various metadata and testing that they get
+  relocated in full fidelity.
+
 - Bug: I just tried migrating a versioned bucket from us/dra to eu/standard.
   at step 15 of stage 2 it printed:
     Removing gs://mfsbucket-relocate/...
@@ -64,6 +67,3 @@
   the bucket. I think this is just a consequence of our eventually consistent
   bucket listings, so the solution is a sleep 5/retry loop. I repeated several
   times (by hand) and was able eventually to delete the bucket.
-
-- create a bunch of objects with various metadata and testing that they get
-  relocated in full fidelity.
