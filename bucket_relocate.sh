@@ -125,6 +125,19 @@ if [ ! -f $steplog ]; then
   touch $steplog
 fi
 
+function ParallelIfNoVersioning() {
+  versioning=`$gsutil getversioning $1 | head -1`
+  vpos=$((${#src} + 2))
+  versioning=${versioning:vpos}
+  if [ "$versioning" == 'Enabled' ]; then
+    echo "$src has versioning enabled, so we have to copy all objects "\
+         "sequentially, to preserve the object version ordering." > /dev/tty
+    echo ""
+  else
+   echo "-m"
+  fi
+}
+
 function EchoErr() {
   # echo the function parameters to stderr.
   echo "$@" 1>&2;
@@ -385,16 +398,7 @@ function Stage1 {
     # Copy the objects from the source bucket to the temp bucket
     if [ `LastStep "$src"` -eq 5 ]; then
       LogStepStart "Step 6: ($src) - Copy objects from source to the temporary bucket ($dst)."
-      versioning=`$gsutil getversioning $src | head -1`
-      vpos=$((${#src} + 2))
-      versioning=${versioning:vpos}
-      if [ "$versioning" == 'Enabled' ]; then
-        echo "$src has versioning enabled, so we have to copy all objects "\
-             "sequentially, to preserve the object version ordering."
-        parallel=""
-      else
-        parallel="-m"
-      fi
+      parallel=`ParallelIfNoVersioning $src`
       $gsutil $parallel cp -R -p -L $manifest -D $src/* $dst/
       if [ $? -ne 0 ]; then
         EchoErr "Failed to copy objects from $src to $dst."
@@ -467,16 +471,7 @@ function Stage2 {
     # Catch up with any new files.
     if [ `LastStep "$src"` -eq 7 ]; then
       LogStepStart "Step 8: ($src) - Catch up any new objects that weren't copied."
-      versioning=`$gsutil getversioning $src | head -1`
-      vpos=$((${#src} + 2))
-      versioning=${versioning:vpos}
-      if [ "$versioning" == 'Enabled' ]; then
-        echo "$src has versioning enabled, so we have to copy all objects "\
-             "sequentially, to preserve the object version ordering."
-        parallel=""
-      else
-        parallel="-m"
-      fi
+      parallel=`ParallelIfNoVersioning $src`
       $gsutil $parallel cp -R -p -L $manifest -D $src/* $dst/
       if [ $? -ne 0 ]; then
         EchoErr "Failed to copy any new objects from $src to $dst"
@@ -602,16 +597,7 @@ function Stage2 {
 
     if [ `LastStep "$src"` -eq 12 ]; then
       LogStepStart "Step 13: ($src) - Copy all objects back to the original bucket."
-      versioning=`$gsutil getversioning $src | head -1`
-      vpos=$((${#src} + 2))
-      versioning=${versioning:vpos}
-      if [ "$versioning" == 'Enabled' ]; then
-        echo "$src has versioning enabled, so we have to copy all objects "\
-             "sequentially, to preserve the object version ordering."
-        parallel=""
-      else
-        parallel="-m"
-      fi
+      parallel=`ParallelIfNoVersioning $src`
       $gsutil $parallel cp -Rp $dst/* $src/
       if [ $? -ne 0 ]; then
         EchoErr "Failed to copy the objects back to the original bucket: $src"
