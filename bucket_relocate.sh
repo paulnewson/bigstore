@@ -385,14 +385,23 @@ function Stage1 {
     # Copy the objects from the source bucket to the temp bucket
     if [ `LastStep "$src"` -eq 5 ]; then
       LogStepStart "Step 6: ($src) - Copy objects from source to the temporary bucket ($dst)."
-      $gsutil -m cp -R -p -L $manifest -D $src/* $dst/
+      versioning=`$gsutil getversioning $src | head -1`
+      vpos=$((${#src} + 2))
+      versioning=${versioning:vpos}
+      if [ "$versioning" == 'Enabled' ]; then
+        echo "$src has versioning enabled, so we have to copy all objects "\
+             "sequentially, to preserve the object version ordering."
+        parallel=""
+      else
+        parallel="-m"
+      fi
+      $gsutil $parallel cp -R -p -L $manifest -D $src/* $dst/
       if [ $? -ne 0 ]; then
         EchoErr "Failed to copy objects from $src to $dst."
         exit 1
       fi
       LogStepEnd "6,$src"
     fi
-
 
     # Backup the metadata for the bucket
     if [ `LastStep "$src"` -eq 6 ]; then
@@ -423,8 +432,11 @@ function Stage1 {
         EchoErr "Failed to backup the versioning configuration for $src"
         exit 1
       fi
+      versioning=`cat /tmp/bucket-relocate-vers-for-$short_name | head -1`
       LogStepEnd "7,$src"
     fi
+
+
   done
 
   if [ $stage == 1 ]; then
@@ -455,7 +467,17 @@ function Stage2 {
     # Catch up with any new files.
     if [ `LastStep "$src"` -eq 7 ]; then
       LogStepStart "Step 8: ($src) - Catch up any new objects that weren't copied."
-      $gsutil -m cp -R -p -L $manifest -D $src/* $dst/
+      versioning=`$gsutil getversioning $src | head -1`
+      vpos=$((${#src} + 2))
+      versioning=${versioning:vpos}
+      if [ "$versioning" == 'Enabled' ]; then
+        echo "$src has versioning enabled, so we have to copy all objects "\
+             "sequentially, to preserve the object version ordering."
+        parallel=""
+      else
+        parallel="-m"
+      fi
+      $gsutil $parallel cp -R -p -L $manifest -D $src/* $dst/
       if [ $? -ne 0 ]; then
         EchoErr "Failed to copy any new objects from $src to $dst"
         exit 1
@@ -580,7 +602,17 @@ function Stage2 {
 
     if [ `LastStep "$src"` -eq 12 ]; then
       LogStepStart "Step 13: ($src) - Copy all objects back to the original bucket."
-      $gsutil -m cp -Rp $dst/* $src/
+      versioning=`$gsutil getversioning $src | head -1`
+      vpos=$((${#src} + 2))
+      versioning=${versioning:vpos}
+      if [ "$versioning" == 'Enabled' ]; then
+        echo "$src has versioning enabled, so we have to copy all objects "\
+             "sequentially, to preserve the object version ordering."
+        parallel=""
+      else
+        parallel="-m"
+      fi
+      $gsutil $parallel cp -Rp $dst/* $src/
       if [ $? -ne 0 ]; then
         EchoErr "Failed to copy the objects back to the original bucket: $src"
         exit 1
