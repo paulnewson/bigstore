@@ -34,13 +34,16 @@ while stage 2 runs.
 Starting conditions:
 You must have at least version 4.0 of bash and version 3.30 of gsutil installed,
 with credentials (in your .boto config file) that have FULL_CONTROL access to
-the bucket and READ access to all objects in the bucket. If this script is run
-by an account that lacks these permissions the script will attempt to detect
-that problem and refuse the begin the migration. However, it's possible that
-the script finds no such problems and begins the migration, and then objects
-are uploaded with ACLs that prevent read access by the account running the
-script. If that happens the script will fail part-way through, at which point
-you will need to change the permissions of the new objects and re-run the script.
+all buckets and objects being migrated. If this script is run using credentials
+that lack these permissions it will fail part-way through, at which point you
+will need to change the ACLs of the affected objects and re-run the script.
+If you specify the -v option the script will check all permissions before
+starting the migration (which takes time, because it performs a HEAD on each
+object as well as a GET on the object's ?acl subresource). If you do use the
+-v option it's possible the script will find no problems, begin the migration,
+and then encounter permission problems because of objects that are uploaded
+after the script begins.  If that happens the script will fail part-way through
+and you will need to change the object ACLs and re-run the script.
 
 Caveats:
 1) If an object is deleted from the original bucket after it has been processed
@@ -49,9 +52,7 @@ Caveats:
    change will not be re-copied during stage 2.
 3) Object change notification configuration isn't preserved by this migration
    script.
-4) The script expects that the identity under which this script is run can read
-   and write all the buckets and objects which need to be migrated.
-5) Restored objects in versioned buckets will preserve the version ordering but
+4) Restored objects in versioned buckets will preserve the version ordering but
    not version numbers. For example, if the original bucket contained:
      gs://bucket/obj#1340448460830000 and gs://bucket/obj#1350448460830000
    the restored bucket might have objects with these versions:
@@ -70,15 +71,16 @@ Examples:
 
 STAGE
    The stage determines what stage should be executed:
-   -1            run stage 1 - during this time users can still add objects
-                 to the bucket. These new objects will be copied in stage 2.
-   -2            run stage 2 - during this stage, no users should be adding
-                 or modifying any content in the bucket.
+   -1            run stage 1 - during this stge users can still add objects to
+                 the bucket(s) being migrated.
+   -2            run stage 2 - during this stage no users should add or modify
+                 any objects in the bucket(s) being migrated.
    -A            run stage 1 and stage 2 back-to-back - use this option if you
                  are guaranteed that no users will be making changes to the
                  bucket throughout the entire process.
-    Please note that during both stages users should not be deleting or
-    overwriting existing objects as these changes will not be detected.
+    Please note that during both stages users should not delete or overwrite
+    objects in the buckets being migrated, because these changes will not be
+    detected.
 
 OPTIONS
    -?            show this usage information.
@@ -117,6 +119,7 @@ class=''
 manifest=/tmp/bucket-relocate-manifest.log
 steplog=/tmp/bucket-relocate-step.log
 debugout=/tmp/bucket-relocate-debug.log
+permcheckout=/tmp/bucket-relocate-permcheck.log
 extra_verification=false
 
 # Keep track of the step we're at with each bucket using an associative array
@@ -366,10 +369,11 @@ function Stage1 {
         # The following will attempt to HEAD each object in the bucket, to
         # ensure the credentials running this script have read access to all data
         # being migrated.
-        $gsutil ls -L $src/** &>> $debugout
-        if [ $? -ne 0 ]; then
+        $gsutil ls -L $src/** &> $permcheckout
+        grep -q 'ACCESS DENIED' $permcheckout
+        if [ $? -eq 0 ]; then
           EchoErr "Validation failed: Access denied reading an object from $src."
-          EchoErr "Check the log file ($debugout) for more details."
+          EchoErr "Check the log file ($permcheckout) for more details."
           exit 1
         fi
         LogStepEnd "2,$src"
@@ -447,7 +451,7 @@ function Stage1 {
 
     # Copy the objects from the source bucket to the temp bucket
     if [ `LastStep "$src"` -eq 5 ]; then
-      LogStepStart "Step 6: ($src) - Copy objects from source to the temporary bucket ($dst)."
+      LogStepStart "Step 6: ($src) - Copy objects from source to the temporary bucket ($dst) via local machine."
       parallel=`ParallelIfNoVersioning $src`
       $gsutil $parallel cp -R -p -L $manifest -D $src/* $dst/
       if [ $? -ne 0 ]; then
@@ -623,7 +627,7 @@ function Stage2 {
     fi
 
     if [ `LastStep "$src"` -eq 12 ]; then
-      LogStepStart "Step 13: ($src) - Copy all objects back to the original bucket."
+      LogStepStart "Step 13: ($src) - Copy all objects back to the original bucket (copy in the cloud)."
       parallel=`ParallelIfNoVersioning $src`
       $gsutil $parallel cp -Rp $dst/* $src/
       if [ $? -ne 0 ]; then
