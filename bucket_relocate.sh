@@ -45,14 +45,15 @@ You must have at least version 4.0 of bash and version 3.30 of gsutil installed,
 with credentials (in your.boto config file) that have FULL_CONTROL access to all
 buckets and objects being migrated. If this script is run using credentials that
 lack these permissions it will fail part-way through, at which point you will
-need to change the ACLs of the affected objects and re-run the script. If you
-specify the -v option the script will check all permissions before starting the
-migration (which takes time, because it performs a HEAD on each object as well
-as a GET on the object's ?acl subresource). If you do use the -v option it's
-possible the script will find no problems, begin the migration, and then
-encounter permission problems because of objects that are uploaded after the
-script begins. If that happens the script will fail part-way through and you
-will need to change the object ACLs and re-run the script.
+need to change the ACLs of the affected objects and re-run the script. (The
+script keeps track of what it has completed, so you can re-run it after an
+interruption or problem.) If you specify the -v option the script will check all
+permissions before starting the migration (which takes time, because it performs
+a HEAD on each object as well as a GET on the object's ?acl subresource). If you
+do use the -v option it's possible the script will find no problems, begin the
+migration, and then encounter permission problems because of objects that are
+uploaded after the script begins. If that happens the script will fail part-way
+through and you will need to change the object ACLs and re-run the script.
 
 If you need to change ACLs you can do so using a command like:
 
@@ -244,13 +245,24 @@ function LogStepEnd() {
   echo "END -- $1" >> $debugout
 }
 
-function BucketExists() {
-  $gsutil getversioning $1 &>> $debugout
+function CheckBucketExists() {
+  # Strip out gs://, so can use bucket name as part of filename.
+  bucket=`echo $1 | sed 's/.....//'`
+  # Redirect stderr so we can check for permission denied.
+  $gsutil getversioning $1 &> $basedir/bucketcheck.$bucket
   if [ $? -eq 0 ]; then
-    echo true
+    result="Exist"
   else
-    echo false
+    grep -q AccessDenied $basedir/bucketcheck.$bucket
+    if [ $? -eq 0 ]; then
+      result="AccessDenied"
+    else
+      result="NotExist"
+    fi
   fi
+  cat $basedir/bucketcheck.$bucket >> $debugout
+  rm $basedir/bucketcheck.$bucket
+  echo $result
 }
 
 # Parse command line arguments
@@ -361,10 +373,12 @@ if [ "$gsutil" == '' ]; then
   exit 1
 fi
 
-# 2) Check if gsutil is configured correctly. Get the first bucket from a
-#    gsutil ls. We can safely assume there is at least one bucket otherwise
-#    we would not be running this script.
-test_bucket=`$gsutil ls | head -1`
+# 2) Check if gsutil is configured correctly by attempting to list up through
+#    the first bucket from a gsutil ls. We can safely assume there is at least
+#    one bucket otherwise we would not be running this script. Redirect stderr
+#    to /dev/null so if user has a large number of buckets a Broken Pipe error
+#    isn't output.
+test_bucket=`$gsutil ls 2> /dev/null | head -1`
 if [ "$test_bucket" == '' ]; then
   EchoErr "gsutil does not seem to be configured. Please run gsutil config."
   exit 1
@@ -394,8 +408,11 @@ function Stage1 {
     # Verify that the source bucket exists.
     if [ `LastStep "$src"` -eq 0 ]; then
       LogStepStart "Step 1: ($src) - Verify the bucket exists."
-      exists=`BucketExists $src`
-      if ! $exists; then
+      result=`CheckBucketExists $src`
+      if [ "$result" == "AccessDenied" ]; then
+        EchoErr "Validation check failed: The account running this script does not have permission to access bucket $bucket"
+        exit 1
+      elif [ "$result" == "NotExist" ]; then
         EchoErr "Validation check failed: The specified bucket does not exist: $bucket"
         exit 1
       fi
@@ -456,8 +473,8 @@ function Stage1 {
     # correct location with the correct storage class
     if [ `LastStep "$src"` -eq 3 ]; then
       LogStepStart "Step 4: ($src) - Create a temporary bucket ($dst)."
-      dst_exists=`BucketExists $dst`
-      if $dst_exists; then
+      dst_exists=`CheckBucketExists $dst`
+      if [ "$dst_exists" == "Exist" ]; then
         EchoErr "The bucket $dst already exists."
         exit 1
       else
