@@ -585,6 +585,7 @@ function Stage2 {
   for i in ${!buckets[*]}; do
     src=${buckets[$i]}
     dst=${tempbuckets[$i]}
+    bman=$manifest${src:5}
 
     # Catch up with any new files.
     if [ `LastStep "$src"` -eq 7 ]; then
