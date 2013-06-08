@@ -97,6 +97,7 @@ class BucketRelocateTests(unittest.TestCase):
   def test_SimpleStage2(self):
     bucket = self.buckets[0]
     self._Relocate(stage='-1', buckets=[bucket])
+    self._GSUtil('cp %s/tjp.dat %s/tjp2.dat' % (bucket, bucket))
     self._Relocate(stage='-2', buckets=[bucket])
 
   def test_RelocateToDRA(self):
